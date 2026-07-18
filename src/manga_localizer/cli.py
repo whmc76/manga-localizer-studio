@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import logging
 import os
 import sys
 import threading
@@ -27,7 +28,14 @@ def configure_cli_encoding(*streams) -> None:
             reconfigure(encoding="utf-8", errors="backslashreplace")
 
 
+def configure_dependency_logging() -> None:
+    """Keep optional HTTP capability probes out of the user-facing console."""
+    logging.getLogger("httpx").setLevel(logging.WARNING)
+    logging.getLogger("httpcore").setLevel(logging.WARNING)
+
+
 configure_cli_encoding()
+configure_dependency_logging()
 
 
 app = typer.Typer(help="Local-first manga localization workspace.", no_args_is_help=True)

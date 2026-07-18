@@ -4,7 +4,7 @@ Date: 2026-07-19
 
 ## Automated checks
 
-- 50 unit/API/contract tests passed on Windows with Python 3.12.
+- 52 unit/API/contract tests passed on Windows with Python 3.12.
 - `uv sync --locked --extra ml --extra test --dry-run` resolved the complete 0.4.3 environment with the pinned Torch 2.8.0 and Torchvision 0.23.0 pair.
 - The CUDA 12.9 overlay installed Torch 2.8.0+cu129 and Torchvision 0.23.0+cu129; both imported successfully, CUDA was available, and the RTX 5090 was detected.
 - Renderer regressions cover native-resolution LaMa boundaries, exact unmasked-pixel restoration, source-driven outlined display text, bold balloon text, furigana outside the main OCR box, and lossless output.

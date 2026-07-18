@@ -1,5 +1,6 @@
 import io
 import json
+import warnings
 from pathlib import Path
 
 from PIL import Image, ImageDraw
@@ -8,9 +9,19 @@ from manga_localizer.ocr import (
     OllamaVisionOCR,
     PaddleMangaOCR,
     _light_on_dark_regions,
+    _suppress_optional_ccache_warning,
     list_images,
     manga_force_cpu,
 )
+
+
+def test_only_the_optional_ccache_notice_is_suppressed():
+    with warnings.catch_warnings(record=True) as caught:
+        warnings.simplefilter("always")
+        with _suppress_optional_ccache_warning():
+            warnings.warn("No ccache found. Compilation cache is optional.", UserWarning)
+            warnings.warn("actionable inference warning", RuntimeWarning)
+    assert [str(item.message) for item in caught] == ["actionable inference warning"]
 
 
 def test_images_are_naturally_sorted(tmp_path):
