@@ -1,0 +1,102 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="color-scheme" content="light">
+  <title>Manga Localizer Studio</title>
+  <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 64 64'%3E%3Crect width='64' height='64' rx='14' fill='%23262320'/%3E%3Ctext x='32' y='44' text-anchor='middle' font-size='38' fill='white'%3E%E6%BC%AB%3C/text%3E%3C/svg%3E">
+  <link rel="stylesheet" href="/app.css">
+</head>
+<body>
+  <div class="app-shell" data-testid="app-shell">
+    <aside class="sidebar" data-testid="sidebar">
+      <div class="brand"><span class="brand-mark">漫</span><span><b>Manga Localizer</b><small>STUDIO</small></span></div>
+      <nav aria-label="主导航">
+        <button class="nav-item active" data-view="workspace"><span>＋</span><b>新建项目</b></button>
+        <button class="nav-item" data-view="history"><span>◷</span><b>任务记录</b></button>
+        <button class="nav-item" data-view="models"><span>⬡</span><b>模型管理</b></button>
+        <button class="nav-item" data-view="settings"><span>⚙</span><b>设置</b></button>
+      </nav>
+      <div class="local-note"><span></span><div><b>本地模式</b><small>数据不会离开设备</small></div></div>
+      <p id="versionLabel" class="version">MIT License</p>
+    </aside>
+
+    <main class="main-shell">
+      <header class="topbar" data-testid="topbar">
+        <div><h1 id="pageTitle">漫画本地化工作台</h1><p>导入图片，自动识别并生成连贯的中文版本</p></div>
+        <div class="top-actions"><a class="icon-button" href="https://github.com/whmc76/manga-localizer-studio" target="_blank" rel="noreferrer" aria-label="打开 GitHub">⌁</a><span class="avatar">ML</span></div>
+      </header>
+
+      <div class="page-content">
+        <section id="workspaceView" class="view active" data-view-panel="workspace">
+          <section class="panel setup-panel" data-testid="project-setup">
+            <div class="section-title"><span><em>01</em> 项目设置</span><button id="exampleButton" class="text-button">查看快速上手</button></div>
+            <div class="setup-grid">
+              <label><span>源图片文件夹</span><div class="path-field"><i>▰</i><input id="sourcePath" autocomplete="off" placeholder="选择包含漫画图片的文件夹"><button id="sourcePicker">选择文件夹</button></div></label>
+              <label><span>输出目录</span><div class="path-field"><i>▱</i><input id="outputPath" autocomplete="off" placeholder="不会覆盖源图片"><button id="outputPicker">选择文件夹</button></div></label>
+              <label><span>目标语言</span><select id="targetLanguage"><option>简体中文</option><option>繁体中文</option><option>English</option></select></label>
+            </div>
+          </section>
+
+          <section class="panel pipeline-panel" data-testid="pipeline">
+            <div class="section-title"><span><em>02</em> 本地化流程</span><small id="pipelineEstimate">等待开始</small></div>
+            <div class="pipeline-steps">
+              <div class="pipeline-step" data-phase="detect"><i>1</i><span><b>文字检测</b><small>定位文字区域</small></span></div><div class="step-line"></div>
+              <div class="pipeline-step" data-phase="ocr"><i>2</i><span><b>漫画 OCR</b><small>读取日文内容</small></span></div><div class="step-line"></div>
+              <div class="pipeline-step" data-phase="translate"><i>3</i><span><b>连贯翻译</b><small>参考前后页面</small></span></div><div class="step-line"></div>
+              <div class="pipeline-step" data-phase="render"><i>4</i><span><b>原位替换</b><small>保留原始尺寸</small></span></div>
+            </div>
+          </section>
+
+          <div class="workspace-grid">
+            <section class="panel preview-card" data-testid="preview-card">
+              <div class="preview-head"><div><b>页面预览</b><span id="previewName">尚未载入页面</span></div><div class="segments" role="group" aria-label="预览模式"><button data-preview="source">原图</button><button data-preview="output">译文</button><button class="selected" data-preview="compare">对比</button></div></div>
+              <div id="previewCanvas" class="preview-canvas empty">
+                <div id="emptyPreview" class="empty-state"><span>图</span><b>选择源文件夹后开始任务</b><p>完成的页面会在这里提供原图与译文对比</p></div>
+                <figure class="preview-pane source-pane"><figcaption>原图</figcaption><img id="sourcePreview" alt="源漫画页面预览"></figure>
+                <div class="compare-divider">↔</div>
+                <figure class="preview-pane output-pane"><figcaption>译文</figcaption><img id="outputPreview" alt="本地化页面预览"></figure>
+              </div>
+              <div class="pager"><button id="prevPage" aria-label="上一页" disabled>‹</button><span><b id="pageNumber">0</b> / <span id="pageTotal">0</span></span><button id="nextPage" aria-label="下一页" disabled>›</button></div>
+            </section>
+
+            <aside class="inspector">
+              <section class="panel model-panel" data-testid="model-status">
+                <div class="section-title"><span>模型状态</span><button id="refreshModels" class="text-button" aria-label="刷新模型状态">↻</button></div>
+                <div id="modelRows" class="model-rows" aria-live="polite"></div>
+                <button id="bootstrapModels" class="secondary-button">准备缺失模型</button>
+                <div id="modelProgress" class="mini-progress" hidden><i></i><small>准备模型…</small></div>
+              </section>
+
+              <section class="panel settings-panel" data-testid="translation-settings">
+                <div class="section-title"><span>翻译设置</span></div>
+                <label class="toggle-row"><span><b>故事连贯模式</b><small>参考相邻页面调整人名和语气</small></span><input id="storyContext" type="checkbox"><i></i></label>
+                <label class="context-row"><span>上下文页数</span><div class="counter"><button id="contextMinus" type="button">−</button><output id="contextPages">3</output><button id="contextPlus" type="button">＋</button></div></label>
+                <label class="toggle-row"><span><b>保留拟声词</b><small>仅替换对白和旁白</small></span><input id="preserveSfx" type="checkbox"><i></i></label>
+              </section>
+
+              <button id="startButton" class="primary-button" disabled>开始本地化 <span>→</span></button>
+              <p class="privacy">所有处理均在本机完成，不上传图片</p>
+            </aside>
+          </div>
+
+          <section class="panel execution-bar" data-testid="execution-status">
+            <div class="execution-copy"><span id="activityRing" class="activity-ring"></span><div><b id="jobMessage">尚未开始任务</b><small id="jobDetail">选择源文件夹和输出目录后即可开始</small></div></div>
+            <div class="progress-track"><i id="jobProgress"></i></div><span id="jobCount">0 / 0</span>
+            <button id="pauseButton" disabled title="当前版本不支持安全暂停">Ⅱ 暂停</button>
+          </section>
+        </section>
+
+        <section id="historyView" class="view utility-view" data-view-panel="history"><div class="utility-head"><div><h2>任务记录</h2><p>任务状态会保存在本机应用目录。</p></div><button id="refreshJobs" class="secondary-button">刷新</button></div><div id="jobList" class="utility-list"></div></section>
+        <section id="modelsView" class="view utility-view" data-view-panel="models"><div class="utility-head"><div><h2>模型管理</h2><p>默认优先从 ModelScope 下载；无等价模型时明确回退。</p></div><button id="bootstrapModelsLarge" class="primary-small">准备全部模型</button></div><div id="modelListLarge" class="utility-list"></div></section>
+        <section id="settingsView" class="view utility-view" data-view-panel="settings"><div class="utility-head"><div><h2>设置</h2><p>设置只保存在本机。</p></div></div><div class="panel settings-form"><label>计算设备<select id="deviceSetting"><option value="auto">自动选择</option><option value="cpu">CPU</option><option value="gpu:0">GPU 0</option></select></label><label class="toggle-row"><span><b>ModelScope 优先</b><small>适合中国大陆网络环境</small></span><input id="preferModelscope" type="checkbox"><i></i></label><p id="appHome"></p></div></section>
+      </div>
+    </main>
+  </div>
+
+  <div id="toast" class="toast" role="status" aria-live="polite"></div>
+  <dialog id="quickStart"><button class="dialog-close" aria-label="关闭">×</button><h2>三步快速上手</h2><ol><li>先在“模型管理”准备所需权重。</li><li>选择源图片文件夹和独立输出目录。</li><li>点击“开始本地化”，任务可在记录页继续查看。</li></ol><p>首次下载约需 5 GB；图片与结果不会上传。</p></dialog>
+  <script src="/app.js" defer></script>
+</body>
+</html>

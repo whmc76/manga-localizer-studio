@@ -1,0 +1,119 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Manga Localizer Studio — Design Contract</title>
+  <link rel="stylesheet" href="styles.css">
+</head>
+<body>
+  <aside class="sidebar">
+    <div class="brand"><span class="brand-mark">漫</span><span><b>Manga Localizer</b><small>STUDIO</small></span></div>
+    <nav>
+      <a class="active" href="#"><span>＋</span>新建项目</a>
+      <a href="#"><span>◷</span>任务记录</a>
+      <a href="#"><span>⬡</span>模型管理</a>
+      <a href="#"><span>⚙</span>设置</a>
+    </nav>
+    <div class="sidebar-note"><span class="pulse"></span><div><b>本地模式</b><small>数据不会离开设备</small></div></div>
+    <div class="version">v0.1.0 · MIT License</div>
+  </aside>
+
+  <main class="shell">
+    <header class="topbar">
+      <div><h1>漫画本地化工作台</h1><p>导入图片，自动识别并生成连贯的中文版本</p></div>
+      <div class="top-actions"><button class="ghost">简体中文⌄</button><button class="icon-btn">⌁</button><span class="avatar">ML</span></div>
+    </header>
+
+    <div class="content">
+      <section class="setup panel">
+        <div class="section-title"><span><b>01</b> 项目设置</span><button class="text-btn">使用示例</button></div>
+        <div class="setup-grid">
+          <label><span>源图片文件夹</span><div class="field"><span class="folder">▰</span><b>C:\Manga\source</b><button>选择文件夹</button></div></label>
+          <label><span>输出目录</span><div class="field"><span class="folder">▱</span><b>C:\Manga\output</b><button>自动检测</button></div></label>
+          <label class="language"><span>目标语言</span><div class="select">简体中文 <i>⌄</i></div></label>
+        </div>
+      </section>
+
+      <section class="pipeline panel">
+        <div class="section-title"><span><b>02</b> 本地化流程</span><span class="estimate">预计 8 分钟</span></div>
+        <div class="steps">
+          <div class="step done"><i>✓</i><span><b>文字检测</b><small>125 页已扫描</small></span></div>
+          <div class="line done"></div>
+          <div class="step active"><i>2</i><span><b>漫画 OCR</b><small>38 / 125</small></span></div>
+          <div class="line"></div>
+          <div class="step"><i>3</i><span><b>连贯翻译</b><small>上下文校正</small></span></div>
+          <div class="line"></div>
+          <div class="step"><i>4</i><span><b>原位替换</b><small>保留原始尺寸</small></span></div>
+        </div>
+      </section>
+
+      <div class="workspace-grid">
+        <section class="preview panel">
+          <div class="preview-head">
+            <div><b>页面预览</b><span>004_sdvx.jpg</span></div>
+            <div class="segments"><button>原图</button><button>译文</button><button class="selected">对比</button></div>
+          </div>
+          <div class="canvas">
+            <div class="page original">
+              <span class="page-label">原图</span>
+              <svg viewBox="0 0 420 560" aria-label="generic comic preview">
+                <rect width="420" height="560" fill="#f7f5f1"/>
+                <path d="M0 210H420M0 380H420M225 0V210" stroke="#272523" stroke-width="7"/>
+                <circle cx="118" cy="105" r="52" fill="none" stroke="#272523" stroke-width="8"/>
+                <path d="M68 98q50-70 105 0M88 118q30 30 63 0M75 166q42-28 84 0" fill="none" stroke="#272523" stroke-width="7"/>
+                <ellipse cx="308" cy="86" rx="68" ry="45" fill="#fff" stroke="#272523" stroke-width="5"/>
+                <text x="302" y="52" font-size="22" writing-mode="tb">こんにちは</text>
+                <path d="M70 270h95v86H70zM215 250h135v110H215z" fill="#d6d2ca" stroke="#272523" stroke-width="6"/>
+                <path d="M20 420h380v112H20z" fill="#e1ded7" stroke="#272523" stroke-width="6"/>
+                <path d="M42 516l80-72 64 55 76-58 115 77" fill="none" stroke="#272523" stroke-width="8"/>
+              </svg>
+            </div>
+            <div class="divider"><span>↔</span></div>
+            <div class="page translated">
+              <span class="page-label coral">译文</span>
+              <svg viewBox="0 0 420 560" aria-label="localized comic preview">
+                <rect width="420" height="560" fill="#f7f5f1"/>
+                <path d="M0 210H420M0 380H420M225 0V210" stroke="#272523" stroke-width="7"/>
+                <circle cx="118" cy="105" r="52" fill="none" stroke="#272523" stroke-width="8"/>
+                <path d="M68 98q50-70 105 0M88 118q30 30 63 0M75 166q42-28 84 0" fill="none" stroke="#272523" stroke-width="7"/>
+                <ellipse cx="308" cy="86" rx="68" ry="45" fill="#fff" stroke="#272523" stroke-width="5"/>
+                <text x="302" y="58" font-size="25" writing-mode="tb">你好呀</text>
+                <path d="M70 270h95v86H70zM215 250h135v110H215z" fill="#d6d2ca" stroke="#272523" stroke-width="6"/>
+                <path d="M20 420h380v112H20z" fill="#e1ded7" stroke="#272523" stroke-width="6"/>
+                <path d="M42 516l80-72 64 55 76-58 115 77" fill="none" stroke="#272523" stroke-width="8"/>
+              </svg>
+            </div>
+          </div>
+          <div class="pager"><button>‹</button><span><b>4</b> / 125</span><button>›</button></div>
+        </section>
+
+        <aside class="inspector">
+          <section class="panel status-card">
+            <div class="section-title"><span>模型状态</span><button class="refresh">↻</button></div>
+            <div class="model"><span class="model-icon">PD</span><div><b>PaddleOCR</b><small>文字区域检测</small></div><em>已就绪</em></div>
+            <div class="model"><span class="model-icon">漫</span><div><b>Manga OCR</b><small>日文漫画识别</small></div><em>已就绪</em></div>
+            <div class="model"><span class="model-icon">译</span><div><b>Hy-MT2 1.8B</b><small>连贯翻译</small></div><em>已就绪</em></div>
+            <div class="download"><span></span><small>ModelScope 镜像优先 · 4.1 GB</small></div>
+          </section>
+          <section class="panel settings-card">
+            <div class="section-title"><span>翻译设置</span></div>
+            <label class="toggle-row"><span><b>故事连贯模式</b><small>参考相邻页面调整人名和语气</small></span><i class="toggle on"></i></label>
+            <label><span class="field-label">上下文页数</span><div class="counter"><button>−</button><b>3</b><button>＋</button></div></label>
+            <label class="toggle-row"><span><b>保留拟声词</b><small>仅替换对白和旁白</small></span><i class="toggle"></i></label>
+          </section>
+          <button class="primary">开始本地化 <span>→</span></button>
+          <p class="privacy">所有处理均在本机完成，不上传图片</p>
+        </aside>
+      </div>
+
+      <section class="log panel">
+        <div class="log-main"><span class="spinner"></span><div><b>正在识别第 38 页</b><small>GPU · manga-ocr-base · 2.3 页/秒</small></div></div>
+        <div class="progress"><i style="width:30%"></i></div>
+        <span class="progress-label">38 / 125</span>
+        <button class="pause" disabled>Ⅱ 暂停</button>
+      </section>
+    </div>
+  </main>
+</body>
+</html>

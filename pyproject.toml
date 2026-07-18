@@ -1,0 +1,63 @@
+[build-system]
+requires = ["hatchling>=1.27"]
+build-backend = "hatchling.build"
+
+[project]
+name = "manga-localizer-studio"
+version = "0.1.0"
+description = "Local-first manga OCR, coherent translation, and artwork-preserving text replacement."
+readme = "README.md"
+requires-python = ">=3.11,<3.13"
+license = { text = "MIT" }
+authors = [{ name = "Manga Localizer Studio contributors" }]
+keywords = ["manga", "ocr", "translation", "localization", "modelscope"]
+classifiers = [
+  "Development Status :: 3 - Alpha",
+  "License :: OSI Approved :: MIT License",
+  "Programming Language :: Python :: 3.11",
+  "Programming Language :: Python :: 3.12",
+]
+dependencies = [
+  "fastapi>=0.115,<1",
+  "uvicorn[standard]>=0.32,<1",
+  "typer>=0.15,<1",
+  "pydantic>=2.10,<3",
+  "pillow>=10.4,<13",
+  "numpy>=1.26,<3",
+  "opencv-python-headless>=4.10,<5",
+]
+
+[project.optional-dependencies]
+ml = [
+  "modelscope>=1.31,<2",
+  "transformers>=4.56,<6",
+  "accelerate>=1.10,<2",
+  "sentencepiece>=0.2,<1",
+  "manga-ocr>=0.1.15,<1",
+  "paddleocr>=3.3,<4",
+  "paddlex>=3.3,<4",
+]
+test = [
+  "pytest>=8.3,<9",
+  "pytest-cov>=6,<8",
+  "httpx>=0.28,<1",
+]
+
+[project.scripts]
+manga-localizer = "manga_localizer.cli:app"
+
+[project.urls]
+Homepage = "https://github.com/whmc76/manga-localizer-studio"
+Repository = "https://github.com/whmc76/manga-localizer-studio"
+Issues = "https://github.com/whmc76/manga-localizer-studio/issues"
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/manga_localizer"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+addopts = "-q"
+
+[tool.coverage.run]
+source = ["manga_localizer"]
+omit = ["*/web/*"]
