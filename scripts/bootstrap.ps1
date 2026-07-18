@@ -10,6 +10,7 @@ $ErrorActionPreference = "Stop"
 $ProjectRoot = Split-Path -Parent $PSScriptRoot
 $VenvPath = Join-Path $ProjectRoot ".venv"
 $PythonPath = Join-Path $VenvPath "Scripts\python.exe"
+$TorchPackages = @("torch", "torchvision")
 $PaddleGpuPackages = @(
     "paddlepaddle-gpu",
     "nvidia-cublas-cu12",
@@ -35,9 +36,9 @@ if ($UvCommand) {
     & uv pip uninstall --python $PythonPath @PaddleGpuPackages
 
     if ($Profile -eq "cuda129") {
-        & uv pip install --python $PythonPath --reinstall torch --index-url https://download.pytorch.org/whl/cu129
+        & uv pip install --python $PythonPath --reinstall @TorchPackages --index-url https://download.pytorch.org/whl/cu129
     } else {
-        & uv pip install --python $PythonPath --reinstall torch --index-url https://download.pytorch.org/whl/cpu
+        & uv pip install --python $PythonPath --reinstall @TorchPackages --index-url https://download.pytorch.org/whl/cpu
     }
 } else {
     Write-Warning "uv is not installed; using the compatible venv + pip path. Install uv for locked, faster setup."
@@ -53,9 +54,9 @@ if ($UvCommand) {
     & $PythonPath -m pip install -e $ProjectExtra
     & $PythonPath -m pip uninstall -y @PaddleGpuPackages
     if ($Profile -eq "cuda129") {
-        & $PythonPath -m pip install torch --index-url https://download.pytorch.org/whl/cu129
+        & $PythonPath -m pip install @TorchPackages --index-url https://download.pytorch.org/whl/cu129
     } else {
-        & $PythonPath -m pip install torch --index-url https://download.pytorch.org/whl/cpu
+        & $PythonPath -m pip install @TorchPackages --index-url https://download.pytorch.org/whl/cpu
     }
 }
 

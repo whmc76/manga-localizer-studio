@@ -1,5 +1,13 @@
 # Changelog
 
+## 0.4.1 - 2026-07-18
+
+- Keep source previews stable during job polling and request translated previews only after the selected page has actually rendered, eliminating expected 404 request spam.
+- Fit tall manga pages inside the preview pane without clipping and let the canvas consume the height already created by the settings inspector.
+- Show phase-aware output placeholders while OCR, coherent translation, or rendering is still in progress.
+- Install Torch and Torchvision together from the selected CPU/CUDA wheel source so MangaOCR has its intended image-processing backend.
+- Suppress Paddle's optional ccache notice during ordinary inference while preserving actionable runtime warnings.
+
 ## 0.4.0 - 2026-07-18
 
 - Replace destructive text-box cleanup in quality mode with pinned Big-LaMa inpainting; inference stays at native geometry and restores every unmasked pixel exactly.
