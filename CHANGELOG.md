@@ -1,5 +1,10 @@
 # Changelog
 
+## 0.4.5 - 2026-07-19
+
+- Reuse an already-running local workspace instead of starting a second server that immediately fails on port 8765.
+- Keep the Windows launcher open with an actionable message when startup genuinely fails.
+
 ## 0.4.4 - 2026-07-19
 
 - Suppress Paddle's optional ccache notice across the actual model-construction boundary while preserving all actionable inference warnings.
