@@ -1,3 +1,5 @@
+import json
+
 import pytest
 from PIL import Image
 
@@ -103,3 +105,71 @@ def test_japanese_left_in_translation_is_unresolved():
     summary = completion_summary([page])
     assert summary["unresolved_ids"] == ["p001u01"]
     assert summary["invalid_translation_ids"] == ["p001u01"]
+
+
+def test_valid_cached_ocr_page_is_reused(tmp_path):
+    image_path = tmp_path / "001.jpg"
+    Image.new("RGB", (100, 200), "white").save(image_path)
+    work = tmp_path / "work"
+    work.mkdir()
+    cached = {
+        "page": 1,
+        "file": image_path.name,
+        "width": 100,
+        "height": 200,
+        "units": [{"id": "p001u01", "bbox": [1, 2, 30, 40], "ja": "秘密"}],
+    }
+    (work / "001.ocr.json").write_text(
+        json.dumps(cached, ensure_ascii=False), encoding="utf-8"
+    )
+    page = LocalizerPipeline._load_cached_ocr(work, image_path, 1)
+    assert page is not None
+    assert page.units[0].ja == "秘密"
+
+
+def test_stale_cached_ocr_page_is_rejected(tmp_path):
+    image_path = tmp_path / "001.jpg"
+    Image.new("RGB", (100, 200), "white").save(image_path)
+    work = tmp_path / "work"
+    work.mkdir()
+    cached = {"page": 2, "file": image_path.name, "width": 100, "height": 200, "units": []}
+    (work / "001.ocr.json").write_text(json.dumps(cached), encoding="utf-8")
+    assert LocalizerPipeline._load_cached_ocr(work, image_path, 1) is None
+
+
+def test_legacy_cache_is_not_reused_for_a_different_ocr_profile(tmp_path):
+    image_path = tmp_path / "001.jpg"
+    Image.new("RGB", (100, 200), "white").save(image_path)
+    work = tmp_path / "work"
+    work.mkdir()
+    cached = {"page": 1, "file": image_path.name, "width": 100, "height": 200, "units": []}
+    (work / "001.ocr.json").write_text(json.dumps(cached), encoding="utf-8")
+    assert LocalizerPipeline._load_cached_ocr(work, image_path, 1, "ollama", "quality") is None
+
+
+def test_fingerprinted_ocr_cache_matches_the_source_and_backend(tmp_path):
+    image_path = tmp_path / "001.jpg"
+    Image.new("RGB", (100, 200), "white").save(image_path)
+    source_stat = image_path.stat()
+    work = tmp_path / "work"
+    work.mkdir()
+    cached = {
+        "page": 1,
+        "file": image_path.name,
+        "width": 100,
+        "height": 200,
+        "units": [],
+        "_cache": {
+            "ocr_backend": "builtin",
+            "quality_profile": "quality",
+            "source_size": source_stat.st_size,
+            "source_mtime_ns": source_stat.st_mtime_ns,
+        },
+    }
+    cache_path = work / "001.ocr.json"
+    cache_path.write_text(json.dumps(cached), encoding="utf-8")
+    assert LocalizerPipeline._load_cached_ocr(work, image_path, 1) is not None
+
+    cached["_cache"]["source_size"] += 1
+    cache_path.write_text(json.dumps(cached), encoding="utf-8")
+    assert LocalizerPipeline._load_cached_ocr(work, image_path, 1) is None

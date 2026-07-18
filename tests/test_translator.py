@@ -7,6 +7,8 @@ from manga_localizer.translator import (
     OpenAICompatibleTranslator,
     PromptTranslator,
     available_remote_models,
+    interjection_fallback,
+    kana_bad_words_ids,
     pytorch_device,
 )
 
@@ -104,6 +106,13 @@ def test_translation_quality_gate_rejects_kana_and_context_leakage():
     assert PromptTranslator._valid_translation(unit, "岳君") is True
     assert PromptTranslator._valid_translation(unit, "ガク君") is False
     assert PromptTranslator._valid_translation(unit, "第1页：这是被错误复述的一整段上下文") is False
+    assert PromptTranslator._valid_translation(unit, "郭君啊 / 这样不行 / 不要啊") is False
+    assert PromptTranslator._valid_translation(unit, "呀ń咻") is False
+
+    latin_source = TextUnit(
+        "p001u02", [0, 0, 20, 20], [0, 0, 20, 20], "Ｗ〒ッ", 1.0
+    )
+    assert PromptTranslator._valid_translation(latin_source, "W〒！") is True
 
 
 def test_translation_quality_gate_allows_natural_chinese_expansion():
@@ -111,6 +120,13 @@ def test_translation_quality_gate_allows_natural_chinese_expansion():
     assert PromptTranslator._valid_translation(
         unit, "大家不是搬走了，就是不再来了。"
     ) is True
+
+
+def test_short_interjection_cannot_absorb_another_dialogue_line():
+    unit = TextUnit("p001u01", [0, 0, 20, 20], [0, 0, 20, 20], "にゃ", 1.0)
+    assert PromptTranslator._valid_translation(
+        unit, "格克君别动怎么了很疼吗身体发麻但是"
+    ) is False
 
 
 def test_reviewed_valid_translation_is_not_sent_through_model_again():
@@ -122,3 +138,142 @@ def test_reviewed_valid_translation_is_not_sent_through_model_again():
     )
     assert PromptTranslator._needs_translation(valid, preserve_sfx=False) is False
     assert PromptTranslator._needs_translation(invalid, preserve_sfx=False) is True
+
+
+def test_invalid_kana_output_gets_a_distinct_repair_pass():
+    class RepairingTranslator(PromptTranslator):
+        def __init__(self):
+            super().__init__()
+            self.responses = iter(["ガク君", "还是ガク君"])
+
+        def _generate(self, prompt, max_new_tokens=1600):
+            del prompt, max_new_tokens
+            return next(self.responses)
+
+        def _generate_repair(self, prompt, max_new_tokens):
+            del prompt, max_new_tokens
+            return "岳君"
+
+    unit = TextUnit("p001u01", [0, 0, 20, 20], [0, 0, 20, 20], "ガク君", 1.0)
+    result = RepairingTranslator()._translate_one(unit, [], "无")
+    assert result == "岳君"
+    assert unit.translation_attempts == ["ガク君", "还是ガク君", "岳君"]
+
+
+def test_kana_generation_constraints_cover_vocab_tokens_and_encoded_characters():
+    class FakeTokenizer:
+        def get_vocab(self):
+            return {"你": 1, "ガク": 2, "byte-piece": 3}
+
+        def decode(self, token_ids, skip_special_tokens=True):
+            del skip_special_tokens
+            return {1: "你", 2: "ガク", 3: ""}[token_ids[0]]
+
+        def encode(self, text, add_special_tokens=False):
+            del add_special_tokens
+            return [3, ord(text)]
+
+    blocked = kana_bad_words_ids(FakeTokenizer())
+    assert [2] in blocked
+    assert [3, ord("ン")] in blocked
+    assert [1] not in blocked
+
+
+def test_recurring_names_become_a_glossary_and_inconsistent_candidates_are_repaired():
+    class NameAwareTranslator(PromptTranslator):
+        def _generate(self, prompt, max_new_tokens=1600):
+            del max_new_tokens
+            ids = translator.re.findall(r"\[(p\d+u\d+)\]", prompt)
+            if ids:
+                return "\n".join(f"[{unit_id}] 小刚君" for unit_id in ids)
+            return "加克君"
+
+        def _generate_repair(self, prompt, max_new_tokens):
+            del max_new_tokens
+            return "加克" if "人物名字" in prompt else "加克君"
+
+    pages = [
+        PageOCR(
+            1,
+            "1.png",
+            100,
+            100,
+            [TextUnit("p001u01", [0, 0, 20, 20], [0, 0, 20, 20], "ガク君？", 1.0)],
+        ),
+        PageOCR(
+            2,
+            "2.png",
+            100,
+            100,
+            [
+                TextUnit(
+                    "p002u01",
+                    [0, 0, 20, 20],
+                    [0, 0, 20, 20],
+                    "ガク．．．君！",
+                    1.0,
+                )
+            ],
+        ),
+    ]
+    service = NameAwareTranslator()
+    service.translate_pages(pages, preserve_sfx=False)
+    assert service.resolved_glossary == {"ガク": "加克"}
+    assert [page.units[0].zh for page in pages] == ["加克君", "加克君"]
+    assert all(page.units[0].translation_attempts[0] == "小刚君" for page in pages)
+
+
+def test_inferred_name_is_rejected_when_it_leaks_into_an_unrelated_line():
+    service = PromptTranslator()
+    service.inferred_glossary = {"ガク": "格克"}
+    unit = TextUnit("p001u01", [0, 0, 20, 20], [0, 0, 20, 20], "勇気", 1.0)
+    assert service._respects_glossary(unit, "格克勇气", {"ガク": "格克"}) is False
+
+
+def test_same_batch_candidate_for_different_sources_is_retranslated_individually():
+    class DuplicateRepairTranslator(PromptTranslator):
+        def _generate(self, prompt, max_new_tokens=1600):
+            del max_new_tokens
+            ids = translator.re.findall(r"\[(p\d+u\d+)\]", prompt)
+            if ids:
+                return "\n".join(f"[{unit_id}] 请稍等一下" for unit_id in ids)
+            return "啊！" if "【原文】あ！" in prompt else "等等！"
+
+    page = PageOCR(
+        1,
+        "1.png",
+        100,
+        100,
+        [
+            TextUnit("p001u01", [0, 0, 20, 20], [0, 0, 20, 20], "あ！", 1.0),
+            TextUnit("p001u02", [20, 0, 40, 20], [20, 0, 40, 20], "待って！", 1.0),
+        ],
+    )
+    DuplicateRepairTranslator().translate_pages([page], preserve_sfx=False)
+    assert [unit.zh for unit in page.units] == ["啊！", "等等！"]
+
+
+def test_individual_retry_only_receives_glossary_terms_present_in_its_source():
+    class CapturingTranslator(PromptTranslator):
+        def __init__(self):
+            super().__init__()
+            self.prompt = ""
+
+        def _generate(self, prompt, max_new_tokens=1600):
+            del max_new_tokens
+            self.prompt = prompt
+            return "勇气"
+
+    service = CapturingTranslator()
+    unit = TextUnit("p001u01", [0, 0, 20, 20], [0, 0, 20, 20], "勇気", 1.0)
+    result = service._translate_one(
+        unit, [], "ガク译为格克", {"ガク": "格克"}
+    )
+    assert result == "勇气"
+    assert "固定译名：无" in service.prompt
+    assert "格克" not in service.prompt
+
+
+def test_failed_short_vocalization_has_a_local_target_script_fallback():
+    assert interjection_fallback("．ッ♡♥ゃンっ♡") == "♡♥呀嗯♡"
+    assert interjection_fallback("サナッマンコ締めすぎっ") == ""

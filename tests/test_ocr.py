@@ -7,7 +7,9 @@ from PIL import Image, ImageDraw
 
 from manga_localizer.ocr import (
     OllamaVisionOCR,
+    PageOCR,
     PaddleMangaOCR,
+    TextUnit,
     _light_on_dark_regions,
     _suppress_optional_ccache_warning,
     list_images,
@@ -94,6 +96,33 @@ def test_light_background_does_not_trigger_reverse_title_fallback():
         left = 100 + index * 115
         draw.rectangle((left, 1120, left + 68, 1240), fill="black")
     assert _light_on_dark_regions(image) == []
+
+
+def test_sparse_full_page_display_text_is_reread_as_one_cover_title(tmp_path):
+    source = tmp_path / "cover.png"
+    Image.new("RGB", (1000, 1400), "white").save(source)
+    units = [
+        TextUnit("p001u01", [580, 160, 720, 330], [570, 150, 730, 340], "さて", 0.9),
+        TextUnit("p001u02", [560, 380, 720, 560], [550, 370, 730, 570], "にし", 0.9),
+        TextUnit("p001u03", [300, 590, 520, 930], [290, 580, 530, 940], "勇気", 0.9),
+        TextUnit(
+            "p001u04",
+            [320, 950, 500, 1320],
+            [310, 940, 510, 1330],
+            "があったなら",
+            0.9,
+        ),
+    ]
+    page = PageOCR(1, source.name, 1000, 1400, units)
+    assert PaddleMangaOCR.is_cover_title_candidate(page) is True
+
+    service = object.__new__(PaddleMangaOCR)
+    service.reader = lambda _crop: "僕に勇気があったなら"
+    refined = service.refine_cover_title(source, page)
+    assert len(refined.units) == 1
+    assert refined.units[0].ja == "僕に勇気があったなら"
+    assert refined.units[0].special == "cover_title"
+    assert len(refined.units[0].erase_boxes) == 4
 
 
 def test_ollama_vision_ocr_uses_local_image_endpoint(monkeypatch, tmp_path):

@@ -72,6 +72,9 @@ class TextUnit:
     # translation layout, while these boxes constrain destructive cleanup to
     # the pixels that actually contained source text.
     erase_boxes: list[list[int]] = field(default_factory=list)
+    # Local-only audit trail for failed/repair translation attempts. Persisted
+    # in draft transcripts so a quality-gate failure remains diagnosable.
+    translation_attempts: list[str] = field(default_factory=list)
     # Optional semantic layout hint recorded by a reviewed transcript.  It is
     # never required for ordinary OCR output, but lets cover titles and other
     # display lettering keep their intended composition without page-specific
@@ -158,6 +161,35 @@ def _union_box(items: list[dict]) -> list[int]:
         max(item["box"][2] for item in items),
         max(item["box"][3] for item in items),
     ]
+
+
+def _cover_title_units(
+    units: list[TextUnit], page_width: int, page_height: int
+) -> list[TextUnit]:
+    """Return a conservative full-page display-title group, if one exists."""
+    if not 2 <= len(units) <= 6:
+        return []
+    page_area = max(1, page_width * page_height)
+    box = [
+        min(unit.bbox[0] for unit in units),
+        min(unit.bbox[1] for unit in units),
+        max(unit.bbox[2] for unit in units),
+        max(unit.bbox[3] for unit in units),
+    ]
+    width, height = box[2] - box[0], box[3] - box[1]
+    total_area = sum(_area(unit.bbox) for unit in units)
+    centers = [(unit.bbox[0] + unit.bbox[2]) / 2 for unit in units]
+    if not (
+        height >= page_height * 0.55
+        and page_width * 0.18 <= width <= page_width * 0.58
+        and width * height >= page_area * 0.15
+        and total_area >= page_area * 0.05
+        and min(centers) >= page_width * 0.24
+        and max(centers) <= page_width * 0.76
+        and sum(len(unit.ja) for unit in units) >= 6
+    ):
+        return []
+    return units
 
 
 def _light_on_dark_regions(image: Image.Image) -> list[dict]:
@@ -347,6 +379,49 @@ class PaddleMangaOCR:
             selected.append({"box": box, "text": text, "score": score})
         return selected
 
+    @staticmethod
+    def is_cover_title_candidate(page: PageOCR) -> bool:
+        return bool(_cover_title_units(page.units, page.width, page.height))
+
+    def refine_cover_title(self, image_path: Path, page: PageOCR) -> PageOCR:
+        candidates = _cover_title_units(page.units, page.width, page.height)
+        if not candidates:
+            return page
+        image = Image.open(image_path).convert("RGB")
+        box = [
+            min(unit.bbox[0] for unit in candidates),
+            min(unit.bbox[1] for unit in candidates),
+            max(unit.bbox[2] for unit in candidates),
+            max(unit.bbox[3] for unit in candidates),
+        ]
+        pad_x = max(16, round((box[2] - box[0]) * 0.04))
+        pad_y = max(16, round((box[3] - box[1]) * 0.02))
+        crop_box = [
+            max(0, box[0] - pad_x),
+            max(0, box[1] - pad_y),
+            min(page.width, box[2] + pad_x),
+            min(page.height, box[3] + pad_y),
+        ]
+        refined = self.reader(image.crop(tuple(crop_box))).strip()
+        if not JP_RE.search(refined):
+            return page
+        erase_boxes = [
+            erase_box
+            for unit in candidates
+            for erase_box in (unit.erase_boxes or [unit.bbox])
+        ]
+        merged = TextUnit(
+            id=candidates[0].id,
+            bbox=box,
+            crop_bbox=crop_box,
+            ja=refined,
+            score=max(unit.score for unit in candidates),
+            is_sfx=False,
+            erase_boxes=erase_boxes,
+            special="cover_title",
+        )
+        return PageOCR(page.page, page.file, page.width, page.height, [merged])
+
     def analyze(self, image_path: Path, page_number: int) -> PageOCR:
         image = Image.open(image_path).convert("RGB")
         results = list(self.detector.predict(str(image_path)))
@@ -396,7 +471,8 @@ class PaddleMangaOCR:
                     erase_boxes=[item["box"] for item in group],
                 )
             )
-        return PageOCR(page_number, image_path.name, image.width, image.height, units)
+        page = PageOCR(page_number, image_path.name, image.width, image.height, units)
+        return self.refine_cover_title(image_path, page)
 
 
 class OllamaVisionOCR:

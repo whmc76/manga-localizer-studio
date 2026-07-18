@@ -61,6 +61,59 @@ class LocalizerPipeline:
     def _emit(callback: ProgressCallback, phase: str, current: int, total: int, message: str):
         callback(phase, current, total, message)
 
+    @staticmethod
+    def _write_transcript(
+        path: Path,
+        source: Path,
+        pages: list[PageOCR],
+        glossary: dict[str, str] | None = None,
+    ) -> None:
+        payload = {"source": str(source), "pages": [page.to_dict() for page in pages]}
+        if glossary:
+            payload["glossary"] = glossary
+        path.write_text(json.dumps(payload, ensure_ascii=False, indent=2), encoding="utf-8")
+
+    @staticmethod
+    def _load_cached_ocr(
+        work: Path,
+        image_path: Path,
+        index: int,
+        ocr_backend: str = "builtin",
+        quality_profile: str = "quality",
+    ) -> PageOCR | None:
+        cache_path = work / f"{image_path.stem}.ocr.json"
+        if not cache_path.is_file():
+            return None
+        try:
+            payload = json.loads(cache_path.read_text(encoding="utf-8"))
+            page = page_from_dict(payload)
+            with Image.open(image_path) as image:
+                expected_size = image.size
+            source_stat = image_path.stat()
+        except (OSError, KeyError, TypeError, ValueError, json.JSONDecodeError):
+            return None
+        if page.page != index or page.file != image_path.name:
+            return None
+        if (page.width, page.height) != expected_size:
+            return None
+        metadata = payload.get("_cache")
+        if metadata:
+            if metadata.get("ocr_backend") != ocr_backend:
+                return None
+            if metadata.get("quality_profile") != quality_profile:
+                return None
+            if int(metadata.get("source_size", -1)) != source_stat.st_size:
+                return None
+            if int(metadata.get("source_mtime_ns", -1)) != source_stat.st_mtime_ns:
+                return None
+        else:
+            # v0.4.5 and earlier only produced the built-in quality cache.
+            if (ocr_backend, quality_profile) != ("builtin", "quality"):
+                return None
+            if cache_path.stat().st_mtime_ns < source_stat.st_mtime_ns:
+                return None
+        return page
+
     def run(self, request: PipelineRequest, callback: ProgressCallback | None = None) -> dict:
         emit = callback or (lambda _phase, _current, _total, _message: None)
         source = request.source.expanduser().resolve()
@@ -83,21 +136,61 @@ class LocalizerPipeline:
             self._validate_reviewed_pages(files, pages)
             self._emit(emit, "ocr", total, total, f"已导入审校稿 {transcript_path.name}")
         else:
-            if request.ocr_backend == "builtin":
-                ocr = PaddleMangaOCR(self.paths, request.device, request.quality_profile)
-            elif request.ocr_backend == "ollama":
-                ocr = OllamaVisionOCR(
-                    request.ollama_base_url, request.ollama_ocr_model
+            cached_pages = [
+                self._load_cached_ocr(
+                    work,
+                    image_path,
+                    index,
+                    request.ocr_backend,
+                    request.quality_profile,
                 )
-            else:
-                raise ValueError(f"Unknown OCR backend: {request.ocr_backend}")
-            for index, image_path in enumerate(files, start=1):
-                self._emit(emit, "ocr", index - 1, total, f"识别 {image_path.name}")
-                page = ocr.analyze(image_path, index)
+                for index, image_path in enumerate(files, start=1)
+            ]
+            title_refinements = [
+                bool(
+                    request.ocr_backend == "builtin"
+                    and page is not None
+                    and PaddleMangaOCR.is_cover_title_candidate(page)
+                )
+                for page in cached_pages
+            ]
+            ocr = None
+            if any(page is None for page in cached_pages) or any(title_refinements):
+                if request.ocr_backend == "builtin":
+                    ocr = PaddleMangaOCR(self.paths, request.device, request.quality_profile)
+                elif request.ocr_backend == "ollama":
+                    ocr = OllamaVisionOCR(
+                        request.ollama_base_url, request.ollama_ocr_model
+                    )
+                else:
+                    raise ValueError(f"Unknown OCR backend: {request.ocr_backend}")
+            for index, (image_path, cached_page) in enumerate(
+                zip(files, cached_pages), start=1
+            ):
+                cache_updated = False
+                if cached_page is not None:
+                    page = cached_page
+                    if title_refinements[index - 1]:
+                        page = ocr.refine_cover_title(image_path, page)
+                        cache_updated = page is not cached_page
+                    self._emit(emit, "ocr", index - 1, total, f"复用 OCR {image_path.name}")
+                else:
+                    self._emit(emit, "ocr", index - 1, total, f"识别 {image_path.name}")
+                    page = ocr.analyze(image_path, index)
                 pages.append(page)
-                (work / f"{image_path.stem}.ocr.json").write_text(
-                    json.dumps(page.to_dict(), ensure_ascii=False, indent=2), encoding="utf-8"
-                )
+                if cached_page is None or cache_updated:
+                    page_payload = page.to_dict()
+                    source_stat = image_path.stat()
+                    page_payload["_cache"] = {
+                        "ocr_backend": request.ocr_backend,
+                        "quality_profile": request.quality_profile,
+                        "source_size": source_stat.st_size,
+                        "source_mtime_ns": source_stat.st_mtime_ns,
+                    }
+                    (work / f"{image_path.stem}.ocr.json").write_text(
+                        json.dumps(page_payload, ensure_ascii=False, indent=2),
+                        encoding="utf-8",
+                    )
                 self._emit(emit, "ocr", index, total, f"已识别 {image_path.name}")
 
         needs_translation = any(
@@ -132,15 +225,27 @@ class LocalizerPipeline:
         else:
             raise ValueError(f"Unknown inference backend: {request.inference_backend}")
         if translator is not None:
-            translator.translate_pages(
-                pages,
-                context_pages=max(0, min(12, request.context_pages)),
-                story_context=request.story_context,
-                preserve_sfx=request.preserve_sfx,
-                glossary=request.glossary,
-                progress=lambda current, count: self._emit(
-                    emit, "translate", current, count, f"已翻译 {current}/{count} 页"
-                ),
+            try:
+                translator.translate_pages(
+                    pages,
+                    context_pages=max(0, min(12, request.context_pages)),
+                    story_context=request.story_context,
+                    preserve_sfx=request.preserve_sfx,
+                    glossary=request.glossary,
+                    progress=lambda current, count: self._emit(
+                        emit, "translate", current, count, f"已翻译 {current}/{count} 页"
+                    ),
+                )
+            finally:
+                self._write_transcript(
+                    work / "translation-draft.json",
+                    source,
+                    pages,
+                    translator.resolved_glossary,
+                )
+        else:
+            self._write_transcript(
+                work / "translation-draft.json", source, pages, request.glossary
             )
         quality = completion_summary(pages, request.preserve_sfx)
         if quality["unresolved_units"]:
@@ -150,9 +255,11 @@ class LocalizerPipeline:
                 f" ({sample}). Translate them or assign an explicit skip_reason."
             )
         self._emit(emit, "translate", total, total, "连贯翻译完成")
-        transcript = {"source": str(source), "pages": [page.to_dict() for page in pages]}
-        (work / "transcript.json").write_text(
-            json.dumps(transcript, ensure_ascii=False, indent=2), encoding="utf-8"
+        self._write_transcript(
+            work / "transcript.json",
+            source,
+            pages,
+            translator.resolved_glossary if translator is not None else request.glossary,
         )
 
         if request.quality_profile == "quality":
@@ -270,6 +377,7 @@ def page_from_dict(payload: dict) -> PageOCR:
                     or (UNRESOLVED_SKIP_REASON if bool(unit.get("skip", False)) else "")
                 ),
                 erase_boxes=unit.get("erase_boxes", []),
+                translation_attempts=list(unit.get("translation_attempts", [])),
                 special=str(unit.get("special", "")).strip(),
             )
             for unit in payload["units"]

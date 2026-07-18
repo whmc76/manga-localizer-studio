@@ -1,5 +1,15 @@
 # Changelog
 
+## 0.4.6 - 2026-07-19
+
+- Add a distinct final repair pass when a local translation remains empty, malformed, or contains Japanese kana, while keeping the incomplete-work quality gate strict.
+- Infer a compact glossary for recurring katakana character names and reject per-line candidates that do not use the selected fixed name, keeping character references coherent without an LLM API.
+- Re-read sparse full-page display lettering as one MangaOCR title region, preserving the original erase boxes while restoring a single large outlined Chinese composition.
+- Reject duplicated cross-unit candidates, disproportionate short-text expansions, slash-joined context, unrelated glossary names, and source-less Latin characters before they reach rendering.
+- Add a deterministic local fallback for short failed vocalizations so hearts and punctuation survive without retaining kana or requiring an API.
+- Persist every candidate in `translation-draft.json` so a failed translation remains diagnosable and reviewable instead of discarding model output.
+- Resume failed jobs from source- and backend-validated OCR caches, including safe compatibility with built-in quality caches created by earlier releases.
+
 ## 0.4.5 - 2026-07-19
 
 - Reuse an already-running local workspace instead of starting a second server that immediately fails on port 8765.
