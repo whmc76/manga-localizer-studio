@@ -1,5 +1,12 @@
 # Changelog
 
+## 0.1.2 - 2026-07-18
+
+- Make uv the primary environment and dependency manager on Windows and Linux.
+- Commit `uv.lock` for reproducible application, ML, and test dependencies.
+- Keep CPU/CUDA-specific Torch and Paddle wheels as a hardware-aware uv overlay.
+- Run the full Windows/Linux and Python 3.11/3.12 CI matrix through official setup-uv.
+
 ## 0.1.1 - 2026-07-18
 
 - Automatically provision a pinned OFL CJK font on minimal Windows/Linux systems.

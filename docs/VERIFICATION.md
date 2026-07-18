@@ -4,7 +4,7 @@ Date: 2026-07-18
 
 ## Automated checks
 
-- 14 unit/API/contract tests passed on Windows with Python 3.12.
+- 15 unit/API/contract tests passed on Windows with Python 3.12.
 - Source distribution and wheel built successfully.
 - Python source compiled with `compileall`.
 - PowerShell bootstrap parsed without errors; Git Bash accepted both shell scripts.

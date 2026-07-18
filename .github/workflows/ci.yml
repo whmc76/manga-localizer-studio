@@ -14,10 +14,10 @@ jobs:
         python-version: ["3.11", "3.12"]
     steps:
       - uses: actions/checkout@v6
-      - uses: actions/setup-python@v6
+      - uses: astral-sh/setup-uv@08807647e7069bb48b6ef5acd8ec9567f424441b # v8.1.0
         with:
           python-version: ${{ matrix.python-version }}
-          cache: pip
-      - run: python -m pip install -e ".[test]"
-      - run: python -m pytest
-      - run: manga-localizer doctor
+          enable-cache: true
+      - run: uv sync --frozen --extra test
+      - run: uv run --frozen --no-sync pytest
+      - run: uv run --frozen --no-sync manga-localizer doctor

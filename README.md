@@ -16,7 +16,7 @@
 
 ## 三步开始
 
-要求：Windows 10/11 或 Linux、Python 3.12、约 8 GB 可用磁盘。CPU 可以运行，NVIDIA GPU 更快。
+要求：Windows 10/11 或 Linux、约 8 GB 可用磁盘。推荐安装 [uv](https://docs.astral.sh/uv/)；uv 会自动准备 Python 3.12 和锁定环境。没有 uv 时仍会回退到系统 Python + pip。CPU 可以运行，NVIDIA GPU 更快。
 
 ### Windows
 
@@ -27,6 +27,8 @@ cd manga-localizer-studio
 ```
 
 首次启动会自动完成环境和权重安装（约 5 GB，耗时取决于网络），随后打开 `http://127.0.0.1:8765`。之后双击 `start-windows.bat` 即可。
+
+尚未安装 uv 时，可先执行 `winget install --id=astral-sh.uv -e`；这一步不是强制要求。
 
 ### Linux
 
@@ -96,11 +98,12 @@ flowchart LR
 
 ```powershell
 .\scripts\bootstrap.ps1 -Profile cpu -SkipModels -Dev
-.\.venv\Scripts\python.exe -m pytest
-.\.venv\Scripts\python.exe -m manga_localizer.cli ui --no-open
+uv lock --check
+uv run --frozen --no-sync pytest
+uv run --frozen --no-sync manga-localizer ui --no-open
 ```
 
-CI 在 Windows/Linux、Python 3.11/3.12 上运行不下载权重的核心测试。完整模型测试需在本地执行。
+普通与 ML 依赖记录在 `uv.lock`；Torch/Paddle 再由启动脚本按 CPU/CUDA 12.9 安装对应轮子。CI 使用官方 `setup-uv`，在 Windows/Linux、Python 3.11/3.12 上运行不下载权重的核心测试。完整模型测试需在本地执行。
 
 ## 许可证与模型说明
 
