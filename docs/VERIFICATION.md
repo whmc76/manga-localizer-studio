@@ -4,7 +4,7 @@ Date: 2026-07-18
 
 ## Automated checks
 
-- 45 unit/API/contract tests passed on Windows with Python 3.12.
+- 46 unit/API/contract tests passed on Windows with Python 3.12.
 - `uv lock --check` passed; the 0.4.0 source distribution and wheel built successfully.
 - Renderer regressions cover native-resolution LaMa boundaries, exact unmasked-pixel restoration, source-driven outlined display text, bold balloon text, furigana outside the main OCR box, and lossless output.
 - OCR regressions cover ordinary Paddle regions, local Ollama vision calls, and conservative light-on-dark title discovery without page, coordinate, filename, or phrase rules.

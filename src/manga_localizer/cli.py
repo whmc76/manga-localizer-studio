@@ -138,15 +138,18 @@ def asset_download():
     typer.echo(f"CJK bold font ready: {bold}")
 
 
+def _font_status(finder, paths: AppPaths) -> str:
+    try:
+        return str(finder(paths))
+    except FileNotFoundError:
+        return "missing; run manga-localizer assets download"
+
+
 @app.command()
 def doctor():
     """Print environment and cache diagnostics."""
     paths = AppPaths.from_env().ensure()
     settings = UserSettings.load(paths.settings)
-    try:
-        font = str(find_font(paths))
-    except FileNotFoundError:
-        font = "missing; run manga-localizer assets download"
     payload = {
         "version": __version__,
         "home": str(paths.root),
@@ -154,8 +157,8 @@ def doctor():
         "models": ModelManager(paths).status(
             settings.inference_backend, settings.quality_profile, settings.ocr_backend
         ),
-        "font": font,
-        "bold_font": str(find_bold_font(paths)),
+        "font": _font_status(find_font, paths),
+        "bold_font": _font_status(find_bold_font, paths),
     }
     typer.echo(json.dumps(payload, ensure_ascii=False, indent=2))
 
