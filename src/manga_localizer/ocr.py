@@ -3,6 +3,7 @@ from __future__ import annotations
 import base64
 import json
 import re
+import warnings
 from dataclasses import asdict, dataclass, field
 from pathlib import Path
 from urllib.request import Request, urlopen
@@ -227,7 +228,17 @@ class PaddleMangaOCR:
         configure_model_caches(paths)
         try:
             from manga_ocr import MangaOcr
-            from paddleocr import PaddleOCR, TextDetection
+            # Paddle imports its C++ extension helper even for ordinary inference.
+            # ccache is only useful when compiling custom extensions, so do not
+            # present its absence as a broken runtime component to desktop users.
+            with warnings.catch_warnings():
+                warnings.filterwarnings(
+                    "ignore",
+                    message=r"No ccache found\..*",
+                    category=UserWarning,
+                    module=r"paddle\.utils\.cpp_extension\.extension_utils",
+                )
+                from paddleocr import PaddleOCR, TextDetection
         except ImportError as exc:
             raise ModelDependencyError(
                 "OCR dependencies are missing. Run scripts/bootstrap with an ML profile."

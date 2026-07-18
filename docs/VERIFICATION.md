@@ -4,8 +4,8 @@ Date: 2026-07-18
 
 ## Automated checks
 
-- 46 unit/API/contract tests passed on Windows with Python 3.12.
-- `uv lock --check` passed; the 0.4.0 source distribution and wheel built successfully.
+- 49 unit/API/contract tests passed on Windows with Python 3.12.
+- `uv sync --locked --extra ml --extra test --dry-run` resolved the complete 0.4.1 environment, including a Torch-compatible Torchvision build.
 - Renderer regressions cover native-resolution LaMa boundaries, exact unmasked-pixel restoration, source-driven outlined display text, bold balloon text, furigana outside the main OCR box, and lossless output.
 - OCR regressions cover ordinary Paddle regions, local Ollama vision calls, and conservative light-on-dark title discovery without page, coordinate, filename, or phrase rules.
 - Model regressions cover checksum validation, atomic Big-LaMa installation, backend-dependent requirements, and the four-model UI contract.
@@ -22,7 +22,9 @@ Date: 2026-07-18
 ## UI checks
 
 - API and DOM contract tests cover all four navigation views, model readiness, independent OCR/translation backend selectors, conditional Ollama/online fields, quality-profile labels, and output-format selection.
-- The previously captured desktop/mobile layout contract remains unchanged. A fresh live browser pass was unavailable in this Windows session because the in-app browser kernel could not install its runtime assets; this is an environment limitation, not counted as a visual pass.
+- A live desktop browser pass against an active 125-page OCR job confirmed the 2126×3661 source page renders at its complete aspect ratio using `object-fit: contain`.
+- The preview card expanded its canvas from the 458 px minimum to 823.9 px to match the settings column, leaving only the intentional 56 px pager row below it.
+- Browser request inspection during polling found one cached source-preview request and no output-preview request before render readiness, eliminating the former repeated 404 responses.
 
 ## User-reported regressions
 
