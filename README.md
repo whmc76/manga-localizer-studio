@@ -4,6 +4,16 @@
 
 ![桌面端工作台](docs/screenshots/app-desktop.png)
 
+## 实机效果：前三页对比
+
+下面三张图来自 125 页回归漫画的实际 v0.4 CLI 输出。补画、样式分析、中文排字和无损 WebP 导出均由项目流水线完成；为稳定复现故事译文，本次整书渲染导入了已审校的 `transcript.json`，并非宣称无人审校的全自动翻译。README 图片仅做等比例缩略展示，源图与成品均保持 2126×3661 原始尺寸。
+
+![第 1 页原图与简体中文输出对比](docs/screenshots/comparisons/comparison-page-01.webp)
+
+![第 2 页原图与简体中文输出对比](docs/screenshots/comparisons/comparison-page-02.webp)
+
+![第 3 页原图与简体中文输出对比](docs/screenshots/comparisons/comparison-page-03.webp)
+
 ## 特性
 
 - **故事连贯**：按连续 4 页分块翻译，并携带前文、固定译名和角色语气约束；自然中文不再被过严字数门槛截断。
