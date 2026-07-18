@@ -3,6 +3,6 @@ set -euo pipefail
 PROJECT_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 cd "$PROJECT_ROOT"
 if [[ ! -x .venv/bin/python ]]; then
-  ./scripts/bootstrap.sh
+  ./scripts/bootstrap.sh --skip-models
 fi
 exec .venv/bin/python -m manga_localizer.cli ui "$@"

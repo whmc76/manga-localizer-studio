@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import os
 import sys
 import threading
 import time
@@ -62,6 +63,11 @@ def run_pipeline(
     story_context: bool = typer.Option(True, "--story-context/--no-story-context"),
     preserve_sfx: bool = typer.Option(True, "--preserve-sfx/--translate-sfx"),
     device: str = typer.Option("auto"),
+    inference_backend: str = typer.Option("builtin", "--backend"),
+    ollama_base_url: str = typer.Option("http://127.0.0.1:11434", "--ollama-url"),
+    ollama_model: str = typer.Option("qwen2.5:7b", "--ollama-model"),
+    online_base_url: str = typer.Option("https://api.openai.com/v1", "--online-url"),
+    online_model: str = typer.Option("", "--online-model"),
 ):
     """Run the same localization pipeline used by the UI."""
     paths = AppPaths.from_env().ensure()
@@ -73,6 +79,12 @@ def run_pipeline(
         story_context=story_context,
         preserve_sfx=preserve_sfx,
         device=device,
+        inference_backend=inference_backend,
+        ollama_base_url=ollama_base_url,
+        ollama_model=ollama_model,
+        online_base_url=online_base_url,
+        online_model=online_model,
+        online_api_key=os.environ.get("MLS_ONLINE_API_KEY", ""),
     )
 
     def progress(phase: str, current: int, total: int, message: str):
@@ -126,7 +138,7 @@ def doctor():
         "version": __version__,
         "home": str(paths.root),
         "settings": settings.__dict__,
-        "models": ModelManager(paths).status(),
+        "models": ModelManager(paths).status(settings.inference_backend),
         "font": font,
     }
     typer.echo(json.dumps(payload, ensure_ascii=False, indent=2))

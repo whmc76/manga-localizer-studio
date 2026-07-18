@@ -71,6 +71,9 @@ Manga Localizer Studio is a local-first creative workspace. A non-technical user
 - Bind to `127.0.0.1` by default.
 - Preserve input image dimensions and never overwrite source files.
 - ModelScope is the preferred model source; Hugging Face is an explicit fallback only where no equivalent exists.
+- Translation inference is selectable: bundled Hy-MT2, local Ollama, or an online OpenAI-compatible API.
+- Changing the translation backend never changes OCR/render boundaries or the coherent page-context contract.
+- Online mode visibly discloses that OCR text is sent remotely; API keys are never persisted.
 - CLI and UI call the same application services and pipeline.
 
 ## Verification selectors

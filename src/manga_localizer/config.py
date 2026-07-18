@@ -41,6 +41,11 @@ class UserSettings:
     preserve_sfx: bool = True
     prefer_modelscope: bool = True
     device: str = "auto"
+    inference_backend: str = "builtin"
+    ollama_base_url: str = "http://127.0.0.1:11434"
+    ollama_model: str = "qwen2.5:7b"
+    online_base_url: str = "https://api.openai.com/v1"
+    online_model: str = ""
 
     @classmethod
     def load(cls, path: Path) -> "UserSettings":

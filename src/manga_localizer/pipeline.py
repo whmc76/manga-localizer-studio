@@ -8,7 +8,7 @@ from typing import Callable
 from .config import AppPaths, UserSettings
 from .ocr import PageOCR, PaddleMangaOCR, TextUnit, list_images
 from .renderer import ArtworkPreservingRenderer
-from .translator import HyMTTranslator
+from .translator import HyMTTranslator, OllamaTranslator, OpenAICompatibleTranslator
 
 
 ProgressCallback = Callable[[str, int, int, str], None]
@@ -24,6 +24,12 @@ class PipelineRequest:
     preserve_sfx: bool = True
     device: str = "auto"
     glossary: dict[str, str] | None = None
+    inference_backend: str = "builtin"
+    ollama_base_url: str = "http://127.0.0.1:11434"
+    ollama_model: str = "qwen2.5:7b"
+    online_base_url: str = "https://api.openai.com/v1"
+    online_model: str = ""
+    online_api_key: str = ""
 
 
 class LocalizerPipeline:
@@ -59,16 +65,37 @@ class LocalizerPipeline:
             )
             self._emit(emit, "ocr", index, total, f"已识别 {image_path.name}")
 
-        self._emit(emit, "translate", 0, total, "加载翻译模型")
-        translator = HyMTTranslator(
-            self.paths.models / "hy-mt2", request.target_language, request.device
-        )
+        self._emit(emit, "translate", 0, total, "加载翻译后端")
+        if request.inference_backend == "builtin":
+            translator = HyMTTranslator(
+                self.paths.models / "hy-mt2", request.target_language, request.device
+            )
+        elif request.inference_backend == "ollama":
+            if not request.ollama_model.strip():
+                raise ValueError("Ollama model name is required")
+            translator = OllamaTranslator(
+                request.ollama_base_url, request.ollama_model, request.target_language
+            )
+        elif request.inference_backend == "online":
+            if not request.online_model.strip():
+                raise ValueError("Online model name is required")
+            translator = OpenAICompatibleTranslator(
+                request.online_base_url,
+                request.online_model,
+                request.online_api_key,
+                request.target_language,
+            )
+        else:
+            raise ValueError(f"Unknown inference backend: {request.inference_backend}")
         translator.translate_pages(
             pages,
             context_pages=max(0, min(12, request.context_pages)),
             story_context=request.story_context,
             preserve_sfx=request.preserve_sfx,
             glossary=request.glossary,
+            progress=lambda current, count: self._emit(
+                emit, "translate", current, count, f"已翻译 {current}/{count} 页"
+            ),
         )
         self._emit(emit, "translate", total, total, "连贯翻译完成")
         transcript = {"source": str(source), "pages": [page.to_dict() for page in pages]}
@@ -110,6 +137,11 @@ def request_from_settings(source: Path, output: Path, settings: UserSettings) ->
         context_pages=settings.context_pages,
         preserve_sfx=settings.preserve_sfx,
         device=settings.device,
+        inference_backend=settings.inference_backend,
+        ollama_base_url=settings.ollama_base_url,
+        ollama_model=settings.ollama_model,
+        online_base_url=settings.online_base_url,
+        online_model=settings.online_model,
     )
 
 

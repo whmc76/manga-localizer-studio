@@ -18,7 +18,7 @@
         <button class="nav-item" data-view="models"><span>⬡</span><b>模型管理</b></button>
         <button class="nav-item" data-view="settings"><span>⚙</span><b>设置</b></button>
       </nav>
-      <div class="local-note"><span></span><div><b>本地模式</b><small>数据不会离开设备</small></div></div>
+      <div class="local-note"><span></span><div><b id="privacyBadgeTitle">本地模式</b><small id="privacyBadgeDetail">数据不会离开设备</small></div></div>
       <p id="versionLabel" class="version">MIT License</p>
     </aside>
 
@@ -71,13 +71,14 @@
 
               <section class="panel settings-panel" data-testid="translation-settings">
                 <div class="section-title"><span>翻译设置</span></div>
+                <label class="context-row"><span>推理后端</span><select id="inferenceBackend"><option value="builtin">内置 Hy-MT2</option><option value="ollama">本机 Ollama</option><option value="online">在线兼容 API</option></select></label>
                 <label class="toggle-row"><span><b>故事连贯模式</b><small>参考相邻页面调整人名和语气</small></span><input id="storyContext" type="checkbox"><i></i></label>
                 <label class="context-row"><span>上下文页数</span><div class="counter"><button id="contextMinus" type="button">−</button><output id="contextPages">3</output><button id="contextPlus" type="button">＋</button></div></label>
                 <label class="toggle-row"><span><b>保留拟声词</b><small>仅替换对白和旁白</small></span><input id="preserveSfx" type="checkbox"><i></i></label>
               </section>
 
               <button id="startButton" class="primary-button" disabled>开始本地化 <span>→</span></button>
-              <p class="privacy">所有处理均在本机完成，不上传图片</p>
+              <p id="privacyNotice" class="privacy">所有处理均在本机完成，不上传图片</p>
             </aside>
           </div>
 
@@ -90,7 +91,28 @@
 
         <section id="historyView" class="view utility-view" data-view-panel="history"><div class="utility-head"><div><h2>任务记录</h2><p>任务状态会保存在本机应用目录。</p></div><button id="refreshJobs" class="secondary-button">刷新</button></div><div id="jobList" class="utility-list"></div></section>
         <section id="modelsView" class="view utility-view" data-view-panel="models"><div class="utility-head"><div><h2>模型管理</h2><p>默认优先从 ModelScope 下载；无等价模型时明确回退。</p></div><button id="bootstrapModelsLarge" class="primary-small">准备全部模型</button></div><div id="modelListLarge" class="utility-list"></div></section>
-        <section id="settingsView" class="view utility-view" data-view-panel="settings"><div class="utility-head"><div><h2>设置</h2><p>设置只保存在本机。</p></div></div><div class="panel settings-form"><label>计算设备<select id="deviceSetting"><option value="auto">自动选择</option><option value="cpu">CPU</option><option value="gpu:0">GPU 0</option></select></label><label class="toggle-row"><span><b>ModelScope 优先</b><small>适合中国大陆网络环境</small></span><input id="preferModelscope" type="checkbox"><i></i></label><p id="appHome"></p></div></section>
+        <section id="settingsView" class="view utility-view" data-view-panel="settings">
+          <div class="utility-head"><div><h2>设置</h2><p>后端配置保存在本机；API 密钥仅保留在当前服务进程或环境变量中。</p></div><button id="checkInference" class="primary-small">测试推理连接</button></div>
+          <div class="panel settings-form">
+            <label>推理后端<select id="inferenceBackendSetting"><option value="builtin">内置 Hy-MT2（完全本地）</option><option value="ollama">Ollama（完全本地）</option><option value="online">在线 OpenAI 兼容 API</option></select></label>
+            <div id="builtinFields" class="backend-fields"><b>内置翻译模型</b><p>默认使用 ModelScope 下载的 Hy-MT2 1.8B；故事上下文不会离开本机。</p></div>
+            <div id="ollamaFields" class="backend-fields" hidden>
+              <label>Ollama 地址<input id="ollamaBaseUrl" type="url" value="http://127.0.0.1:11434"></label>
+              <label>模型名称<input id="ollamaModel" list="inferenceModels" placeholder="例如 qwen2.5:7b"></label>
+            </div>
+            <div id="onlineFields" class="backend-fields" hidden>
+              <label>兼容 API 地址<input id="onlineBaseUrl" type="url" placeholder="https://api.openai.com/v1"></label>
+              <label>模型名称<input id="onlineModel" list="inferenceModels" placeholder="输入服务商提供的模型 ID"></label>
+              <label>API 密钥<input id="onlineApiKey" type="password" autocomplete="off" placeholder="可使用 MLS_ONLINE_API_KEY"></label>
+              <p>在线模式只发送 OCR 文本、前文和术语表，不上传漫画图片。</p>
+            </div>
+            <datalist id="inferenceModels"></datalist>
+            <p id="inferenceStatus" class="inference-status">尚未测试连接</p>
+            <label>计算设备<select id="deviceSetting"><option value="auto">自动选择</option><option value="cpu">CPU</option><option value="gpu:0">GPU 0</option></select></label>
+            <label class="toggle-row"><span><b>ModelScope 优先</b><small>适合中国大陆网络环境</small></span><input id="preferModelscope" type="checkbox"><i></i></label>
+            <p id="appHome"></p>
+          </div>
+        </section>
       </div>
     </main>
   </div>

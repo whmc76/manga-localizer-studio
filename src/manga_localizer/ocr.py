@@ -1,13 +1,19 @@
 from __future__ import annotations
 
+import math
 import re
-from dataclasses import asdict, dataclass
+from dataclasses import asdict, dataclass, field
 from pathlib import Path
 
 from PIL import Image
 
 from .config import AppPaths, configure_model_caches
 from .model_manager import ModelDependencyError
+
+
+def manga_force_cpu(device: str, cuda_available: bool) -> bool:
+    """Keep Manga OCR on CUDA independently from Paddle's device backend."""
+    return device == "cpu" or not cuda_available
 
 
 IMAGE_SUFFIXES = {".jpg", ".jpeg", ".png", ".webp", ".bmp", ".tif", ".tiff"}
@@ -37,6 +43,10 @@ class TextUnit:
     score: float
     is_sfx: bool = False
     zh: str = ""
+    # Keep the detector's tight line boxes. ``bbox`` is the union used for
+    # translation layout, while these boxes constrain destructive cleanup to
+    # the pixels that actually contained source text.
+    erase_boxes: list[list[int]] = field(default_factory=list)
 
     def to_dict(self) -> dict:
         return asdict(self)
@@ -127,23 +137,28 @@ class PaddleMangaOCR:
         configure_model_caches(paths)
         try:
             from manga_ocr import MangaOcr
-            from paddleocr import PaddleOCR
+            from paddleocr import TextDetection
         except ImportError as exc:
             raise ModelDependencyError(
                 "OCR dependencies are missing. Run scripts/bootstrap with an ML profile."
             ) from exc
 
         resolved_device = self._resolve_device(device)
-        self.detector = PaddleOCR(
-            text_detection_model_name="PP-OCRv5_mobile_det",
-            text_recognition_model_name="PP-OCRv5_server_rec",
-            use_doc_orientation_classify=False,
-            use_doc_unwarping=False,
-            use_textline_orientation=True,
-            text_recognition_batch_size=32,
+        # MangaOCR is already the recognition source of truth. Running the
+        # complete PaddleOCR pipeline repeated recognition on CPU and more than
+        # doubled batch time, so keep Paddle limited to detection.
+        self.detector = TextDetection(
+            model_name="PP-OCRv5_mobile_det",
             device=resolved_device,
+            enable_mkldnn=False,
         )
-        self.reader = MangaOcr(force_cpu=resolved_device == "cpu")
+        try:
+            import torch
+
+            torch_cuda = torch.cuda.is_available()
+        except (ImportError, RuntimeError):
+            torch_cuda = False
+        self.reader = MangaOcr(force_cpu=manga_force_cpu(device, torch_cuda))
 
     @staticmethod
     def _resolve_device(device: str) -> str:
@@ -167,6 +182,30 @@ class PaddleMangaOCR:
 
     @staticmethod
     def _regions(payload: dict) -> list[dict]:
+        if "dt_polys" in payload:
+            selected = []
+            scores = payload.get("dt_scores", [])
+            for index, polygon in enumerate(payload.get("dt_polys", [])):
+                xs = [int(point[0]) for point in polygon]
+                ys = [int(point[1]) for point in polygon]
+                box = [min(xs), min(ys), max(xs), max(ys)]
+                if _area(box) < 650:
+                    continue
+                score = float(scores[index]) if index < len(scores) else 0.0
+                top_dx = float(polygon[1][0]) - float(polygon[0][0])
+                top_dy = float(polygon[1][1]) - float(polygon[0][1])
+                angle = math.degrees(math.atan2(top_dy, top_dx))
+                selected.append(
+                    {
+                        "box": box,
+                        "text": "",
+                        "score": score,
+                        # Strongly rotated manga lettering is normally an
+                        # effect rather than dialogue. Preserve it by default.
+                        "sfx_hint": abs(angle) > 7.0,
+                    }
+                )
+            return selected
         texts = payload.get("rec_texts", [])
         scores = payload.get("rec_scores", [])
         boxes = payload.get("rec_boxes", [])
@@ -213,7 +252,11 @@ class PaddleMangaOCR:
                     crop_bbox=crop_box,
                     ja=clean,
                     score=round(score, 4),
-                    is_sfx=bool(KATAKANA_RE.fullmatch(clean)) and len(clean) <= 14,
+                    is_sfx=(
+                        (bool(KATAKANA_RE.fullmatch(clean)) and len(clean) <= 14)
+                        or (len(group) == 1 and group[0].get("sfx_hint", False))
+                    ),
+                    erase_boxes=[item["box"] for item in group],
                 )
             )
         return PageOCR(page_number, image_path.name, image.width, image.height, units)

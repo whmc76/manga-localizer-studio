@@ -1,11 +1,13 @@
 from __future__ import annotations
 
 import asyncio
+import os
 import platform
 import threading
 import uuid
 from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
+from typing import Literal
 
 from fastapi import FastAPI, HTTPException, Query
 from fastapi.responses import FileResponse
@@ -18,6 +20,7 @@ from .jobs import JobService
 from .model_manager import ModelManager
 from .ocr import list_images
 from .pipeline import PipelineRequest
+from .translator import available_remote_models
 
 
 class FolderRequest(BaseModel):
@@ -31,6 +34,12 @@ class SettingsPayload(BaseModel):
     preserve_sfx: bool = True
     prefer_modelscope: bool = True
     device: str = "auto"
+    inference_backend: Literal["builtin", "ollama", "online"] = "builtin"
+    ollama_base_url: str = "http://127.0.0.1:11434"
+    ollama_model: str = "qwen2.5:7b"
+    online_base_url: str = "https://api.openai.com/v1"
+    online_model: str = ""
+    online_api_key: str | None = Field(default=None, max_length=2048)
 
 
 class JobPayload(SettingsPayload):
@@ -41,6 +50,15 @@ class JobPayload(SettingsPayload):
 
 class BootstrapPayload(BaseModel):
     model_ids: list[str] = Field(default_factory=lambda: ["paddleocr", "manga-ocr", "hy-mt2"])
+
+
+class InferenceCheckPayload(BaseModel):
+    inference_backend: Literal["builtin", "ollama", "online"]
+    ollama_base_url: str = "http://127.0.0.1:11434"
+    ollama_model: str = "qwen2.5:7b"
+    online_base_url: str = "https://api.openai.com/v1"
+    online_model: str = ""
+    online_api_key: str | None = Field(default=None, max_length=2048)
 
 
 def _pick_folder(initial: str | None = None) -> str:
@@ -60,13 +78,27 @@ def _pick_folder(initial: str | None = None) -> str:
 
 def create_app(paths: AppPaths | None = None, pipeline_factory=None) -> FastAPI:
     paths = (paths or AppPaths.from_env()).ensure()
-    settings = UserSettings.load(paths.settings)
     models = ModelManager(paths)
     jobs = JobService(paths, pipeline_factory) if pipeline_factory else JobService(paths)
     app = FastAPI(title="Manga Localizer Studio", version=__version__)
     tasks: dict[str, dict] = {}
     task_lock = threading.RLock()
     task_pool = ThreadPoolExecutor(max_workers=1, thread_name_prefix="model-bootstrap")
+    secrets = {"online_api_key": os.environ.get("MLS_ONLINE_API_KEY", "")}
+
+    def public_settings(active: UserSettings) -> dict:
+        return {
+            **active.__dict__,
+            "online_api_key_configured": bool(secrets["online_api_key"]),
+        }
+
+    def save_settings_payload(payload: SettingsPayload) -> UserSettings:
+        if payload.online_api_key is not None:
+            secrets["online_api_key"] = payload.online_api_key.strip()
+        values = payload.model_dump(exclude={"online_api_key"})
+        active = UserSettings(**values)
+        active.save(paths.settings)
+        return active
 
     @app.get("/api/health")
     def health():
@@ -80,14 +112,18 @@ def create_app(paths: AppPaths | None = None, pipeline_factory=None) -> FastAPI:
             "platform": platform.platform(),
             "python": platform.python_version(),
             "home": str(paths.root),
-            "local_only": True,
-            "settings": active.__dict__,
+            "local_only": active.inference_backend != "online",
+            "settings": public_settings(active),
         }
 
     @app.get("/api/models")
     def model_status(refresh: bool = Query(False)):
         del refresh
-        return {"models": models.status(), "source_policy": "ModelScope first"}
+        active = UserSettings.load(paths.settings)
+        return {
+            "models": models.status(active.inference_backend),
+            "source_policy": "ModelScope first",
+        }
 
     def bootstrap(task_id: str, model_ids: list[str]):
         try:
@@ -132,13 +168,51 @@ def create_app(paths: AppPaths | None = None, pipeline_factory=None) -> FastAPI:
 
     @app.get("/api/settings")
     def get_settings():
-        return UserSettings.load(paths.settings).__dict__
+        return public_settings(UserSettings.load(paths.settings))
 
     @app.put("/api/settings")
     def put_settings(payload: SettingsPayload):
-        active = UserSettings(**payload.model_dump())
-        active.save(paths.settings)
-        return active.__dict__
+        return public_settings(save_settings_payload(payload))
+
+    @app.post("/api/inference/check")
+    def check_inference(payload: InferenceCheckPayload):
+        if payload.inference_backend == "builtin":
+            ready = models.is_ready("hy-mt2")
+            return {
+                "ok": ready,
+                "backend": "builtin",
+                "message": "Hy-MT2 已就绪" if ready else "Hy-MT2 尚未下载",
+                "models": ["hy-mt2"] if ready else [],
+            }
+        api_key = (
+            payload.online_api_key.strip()
+            if payload.online_api_key is not None
+            else secrets["online_api_key"]
+        )
+        base_url = (
+            payload.ollama_base_url
+            if payload.inference_backend == "ollama"
+            else payload.online_base_url
+        )
+        try:
+            available = available_remote_models(payload.inference_backend, base_url, api_key)
+        except RuntimeError as exc:
+            raise HTTPException(503, str(exc)) from exc
+        selected = (
+            payload.ollama_model
+            if payload.inference_backend == "ollama"
+            else payload.online_model
+        )
+        return {
+            "ok": bool(available) and (not selected or selected in available),
+            "backend": payload.inference_backend,
+            "message": (
+                f"已连接，发现 {len(available)} 个模型"
+                if not selected or selected in available
+                else f"已连接，但未找到模型 {selected}"
+            ),
+            "models": available,
+        }
 
     @app.post("/api/dialog/folder")
     async def folder_dialog(payload: FolderRequest):
@@ -169,8 +243,13 @@ def create_app(paths: AppPaths | None = None, pipeline_factory=None) -> FastAPI:
             raise HTTPException(422, "No supported images found")
         if source == output:
             raise HTTPException(422, "Output folder must differ from source")
-        settings = SettingsPayload(**payload.model_dump(exclude={"source", "output", "glossary"}))
-        UserSettings(**settings.model_dump()).save(paths.settings)
+        settings = SettingsPayload(
+            **payload.model_dump(exclude={"source", "output", "glossary"})
+        )
+        active = save_settings_payload(settings)
+        api_key = payload.online_api_key
+        if api_key is None:
+            api_key = secrets["online_api_key"]
         request = PipelineRequest(
             source=source,
             output=output,
@@ -180,6 +259,12 @@ def create_app(paths: AppPaths | None = None, pipeline_factory=None) -> FastAPI:
             preserve_sfx=payload.preserve_sfx,
             device=payload.device,
             glossary=payload.glossary,
+            inference_backend=active.inference_backend,
+            ollama_base_url=active.ollama_base_url,
+            ollama_model=active.ollama_model,
+            online_base_url=active.online_base_url,
+            online_model=active.online_model,
+            online_api_key=api_key or "",
         )
         return jobs.submit(request, total=image_count)
 

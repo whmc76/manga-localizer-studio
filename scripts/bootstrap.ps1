@@ -10,6 +10,17 @@ $ErrorActionPreference = "Stop"
 $ProjectRoot = Split-Path -Parent $PSScriptRoot
 $VenvPath = Join-Path $ProjectRoot ".venv"
 $PythonPath = Join-Path $VenvPath "Scripts\python.exe"
+$PaddleGpuPackages = @(
+    "paddlepaddle-gpu",
+    "nvidia-cublas-cu12",
+    "nvidia-cuda-runtime-cu12",
+    "nvidia-cudnn-cu12",
+    "nvidia-cufft-cu12",
+    "nvidia-curand-cu12",
+    "nvidia-cusolver-cu12",
+    "nvidia-cusparse-cu12",
+    "nvidia-nvjitlink-cu12"
+)
 
 Set-Location $ProjectRoot
 if ($Profile -eq "auto") {
@@ -21,13 +32,12 @@ if ($UvCommand) {
     $SyncArgs = @("sync", "--locked", "--extra", "ml", "--python", "3.12")
     if ($Dev) { $SyncArgs += @("--extra", "test") }
     & uv @SyncArgs
+    & uv pip uninstall --python $PythonPath @PaddleGpuPackages
 
     if ($Profile -eq "cuda129") {
         & uv pip install --python $PythonPath --reinstall torch --index-url https://download.pytorch.org/whl/cu129
-        & uv pip install --python $PythonPath paddlepaddle-gpu --index-url https://www.paddlepaddle.org.cn/packages/stable/cu129/
     } else {
         & uv pip install --python $PythonPath --reinstall torch --index-url https://download.pytorch.org/whl/cpu
-        & uv pip install --python $PythonPath paddlepaddle --index-url https://www.paddlepaddle.org.cn/packages/stable/cpu/
     }
 } else {
     Write-Warning "uv is not installed; using the compatible venv + pip path. Install uv for locked, faster setup."
@@ -39,15 +49,14 @@ if ($UvCommand) {
         }
     }
     & $PythonPath -m pip install --upgrade pip wheel
-    if ($Profile -eq "cuda129") {
-        & $PythonPath -m pip install torch --index-url https://download.pytorch.org/whl/cu129
-        & $PythonPath -m pip install paddlepaddle-gpu -i https://www.paddlepaddle.org.cn/packages/stable/cu129/
-    } else {
-        & $PythonPath -m pip install torch --index-url https://download.pytorch.org/whl/cpu
-        & $PythonPath -m pip install paddlepaddle -i https://www.paddlepaddle.org.cn/packages/stable/cpu/
-    }
     $ProjectExtra = if ($Dev) { ".[ml,test]" } else { ".[ml]" }
     & $PythonPath -m pip install -e $ProjectExtra
+    & $PythonPath -m pip uninstall -y @PaddleGpuPackages
+    if ($Profile -eq "cuda129") {
+        & $PythonPath -m pip install torch --index-url https://download.pytorch.org/whl/cu129
+    } else {
+        & $PythonPath -m pip install torch --index-url https://download.pytorch.org/whl/cpu
+    }
 }
 
 & $PythonPath -m manga_localizer.cli assets download

@@ -26,25 +26,25 @@ if command -v uv >/dev/null 2>&1; then
   PYTHON="$PROJECT_ROOT/.venv/bin/python"
   if [[ "$PROFILE" == "cuda129" ]]; then
     uv pip install --python "$PYTHON" --reinstall torch --index-url https://download.pytorch.org/whl/cu129
+    uv pip uninstall --python "$PYTHON" paddlepaddle
     uv pip install --python "$PYTHON" paddlepaddle-gpu --index-url https://www.paddlepaddle.org.cn/packages/stable/cu129/
   else
     uv pip install --python "$PYTHON" --reinstall torch --index-url https://download.pytorch.org/whl/cpu
-    uv pip install --python "$PYTHON" paddlepaddle --index-url https://www.paddlepaddle.org.cn/packages/stable/cpu/
   fi
 else
   echo "Warning: uv is not installed; using the compatible venv + pip path." >&2
   if [[ ! -x .venv/bin/python ]]; then python3.12 -m venv .venv; fi
   PYTHON="$PROJECT_ROOT/.venv/bin/python"
   "$PYTHON" -m pip install --upgrade pip wheel
+  if [[ "$DEV" == 1 ]]; then EXTRA='.[ml,test]'; else EXTRA='.[ml]'; fi
+  "$PYTHON" -m pip install -e "$EXTRA"
   if [[ "$PROFILE" == "cuda129" ]]; then
     "$PYTHON" -m pip install torch --index-url https://download.pytorch.org/whl/cu129
+    "$PYTHON" -m pip uninstall -y paddlepaddle
     "$PYTHON" -m pip install paddlepaddle-gpu -i https://www.paddlepaddle.org.cn/packages/stable/cu129/
   else
     "$PYTHON" -m pip install torch --index-url https://download.pytorch.org/whl/cpu
-    "$PYTHON" -m pip install paddlepaddle -i https://www.paddlepaddle.org.cn/packages/stable/cpu/
   fi
-  if [[ "$DEV" == 1 ]]; then EXTRA='.[ml,test]'; else EXTRA='.[ml]'; fi
-  "$PYTHON" -m pip install -e "$EXTRA"
 fi
 
 "$PYTHON" -m manga_localizer.cli assets download

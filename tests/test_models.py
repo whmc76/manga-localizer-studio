@@ -16,6 +16,15 @@ def test_registry_uses_modelscope_first(tmp_path):
     assert "fallback" in next(item for item in status if item["id"] == "manga-ocr")["provider"]
 
 
+def test_remote_translation_backend_does_not_require_builtin_translator(tmp_path):
+    manager = ModelManager(paths(tmp_path))
+    builtin = {item["id"]: item for item in manager.status("builtin")}
+    ollama = {item["id"]: item for item in manager.status("ollama")}
+    assert builtin["hy-mt2"]["required"] is True
+    assert ollama["hy-mt2"]["required"] is False
+    assert ollama["paddleocr"]["required"] is True
+
+
 def test_ready_marker(tmp_path):
     manager = ModelManager(paths(tmp_path))
     assert not manager.is_ready(MODEL_REGISTRY[0].id)

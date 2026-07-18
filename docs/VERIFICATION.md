@@ -4,12 +4,20 @@ Date: 2026-07-18
 
 ## Automated checks
 
-- 15 unit/API/contract tests passed on Windows with Python 3.12.
+- 30 unit/API/contract tests passed on Windows with Python 3.12.
 - Source distribution and wheel built successfully.
 - Python source compiled with `compileall`.
 - PowerShell bootstrap parsed without errors; Git Bash accepted both shell scripts.
-- The renderer regression test confirms every pixel outside the OCR box is unchanged.
+- Renderer regressions confirm pixels outside the bounded cleanup area remain unchanged and edge-connected panel art survives grouped-text cleanup.
 - Managed-font download is header/size validated and atomically installed.
+
+## Full-book acceptance test
+
+- Ran the built-in backend end to end on a 125-page, 2126×3661 source book (final page 2800×3808).
+- Produced 125 PNG files and a 125-page transcript; every output dimension matched its source.
+- Detected 898 text units: 741 translated units, 157 preserved sound-effect units, and zero missing non-SFX translations.
+- Quality-gate audit found zero remaining kana-bearing or context-leaking translations after bounded retry.
+- Pixel comparison on pages 1, 3, 25, 50, 75, 100, and 125 found zero changed pixels outside the declared cleanup/typesetting regions.
 
 ## Browser checks
 
@@ -25,6 +33,7 @@ The real FastAPI application was inspected with Playwright, not a static mock.
 | Console errors | 0 | 0 |
 
 Interactions checked: all four navigation views, quick-start dialog, model refresh,
+backend switching, conditional Ollama/online fields, failed-connection recovery,
 keyboard focus, empty preview boundaries, and phase-to-step state mapping.
 
 ## Adversarial user complaints

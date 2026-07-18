@@ -116,23 +116,63 @@ class ArtworkPreservingRenderer:
         self.font_path = font_path or ensure_font()
 
     @staticmethod
+    def _appearance(rgb: np.ndarray, box: list[int]) -> tuple[float, float]:
+        x0, y0, x1, y1 = box
+        crop = rgb[y0:y1, x0:x1]
+        if not crop.size:
+            return 255.0, 1.0
+        gray = cv2.cvtColor(crop, cv2.COLOR_RGB2GRAY)
+        return float(gray.mean()), float((gray > 225).mean())
+
+    @staticmethod
+    def _interior_component_mask(binary: np.ndarray, dilation: int) -> np.ndarray:
+        """Select text-like components without touching surrounding line art.
+
+        Manga detector rectangles often cross panel art. Artwork normally enters
+        through a rectangle edge, while glyph components sit inside it. Keeping
+        edge-connected and very large components prevents the cleanup pass from
+        turning characters, furniture, and panel borders into white blocks.
+        """
+        height, width = binary.shape
+        count, labels, stats, _ = cv2.connectedComponentsWithStats(binary, 8)
+        mask = np.zeros_like(binary, dtype=np.uint8)
+        max_area = max(64, round(width * height * 0.18))
+        for label in range(1, count):
+            x, y, component_width, component_height, area = stats[label]
+            touches_edge = (
+                x <= 1
+                or y <= 1
+                or x + component_width >= width - 1
+                or y + component_height >= height - 1
+            )
+            if touches_edge or area < 4 or area > max_area:
+                continue
+            mask[labels == label] = 255
+        if dilation > 1 and mask.any():
+            mask = cv2.dilate(mask, np.ones((dilation, dilation), np.uint8), iterations=1)
+        return mask
+
+    @staticmethod
     def _erase(rgb: np.ndarray, box: list[int]) -> tuple[np.ndarray, float, float]:
         x0, y0, x1, y1 = box
         crop = rgb[y0:y1, x0:x1].copy()
         gray = cv2.cvtColor(crop, cv2.COLOR_RGB2GRAY)
         mean = float(gray.mean()) if gray.size else 255.0
         white_ratio = float((gray > 225).mean()) if gray.size else 1.0
-        if white_ratio > 0.6:
-            mask = (gray < 150).astype(np.uint8) * 255
-            mask = cv2.dilate(mask, np.ones((5, 5), np.uint8), iterations=1)
+        if white_ratio > 0.45 or (mean > 175 and white_ratio > 0.35):
+            mask = ArtworkPreservingRenderer._interior_component_mask(
+                (gray < 150).astype(np.uint8), 5
+            )
             crop[mask > 0] = 255
         elif mean < 145:
-            mask = ((gray > 215) | (gray < 35)).astype(np.uint8) * 255
-            mask = cv2.dilate(mask, np.ones((9, 9), np.uint8), iterations=1)
+            mask = ArtworkPreservingRenderer._interior_component_mask(
+                (gray > 215).astype(np.uint8), 7
+            )
             crop = cv2.inpaint(crop, mask, 6, cv2.INPAINT_TELEA)
         else:
-            mask = (gray < 75).astype(np.uint8) * 255
-            mask = cv2.dilate(mask, np.ones((11, 11), np.uint8), iterations=1)
+            mask = ArtworkPreservingRenderer._interior_component_mask(
+                (gray < 75).astype(np.uint8), 7
+            )
             crop = cv2.inpaint(crop, mask, 6, cv2.INPAINT_TELEA)
         rgb[y0:y1, x0:x1] = crop
         return rgb, mean, white_ratio
@@ -209,11 +249,33 @@ class ArtworkPreservingRenderer:
             if unit.bbox[2] > unit.bbox[0] and unit.bbox[3] > unit.bbox[1]:
                 active.append(unit)
         for unit in active:
-            rgb, mean, white_ratio = self._erase(rgb, unit.bbox)
+            mean, white_ratio = self._appearance(original, unit.bbox)
+            # Grouping several OCR lines is useful for coherent recognition and
+            # typesetting, but erasing their union also destroys every drawing
+            # between those lines. Only clean the original tight detector boxes.
+            erase_boxes = unit.erase_boxes or [unit.bbox]
+            for erase_box in erase_boxes:
+                ex0, ey0, ex1, ey1 = erase_box
+                erase_width, erase_height = ex1 - ex0, ey1 - ey0
+                pad_x = min(24, max(8, round(erase_width * 0.06)))
+                pad_y = min(24, max(8, round(erase_height * 0.04)))
+                bounded = [
+                    max(0, min(page.width, ex0 - pad_x)),
+                    max(0, min(page.height, ey0 - pad_y)),
+                    max(0, min(page.width, ex1 + pad_x)),
+                    max(0, min(page.height, ey1 + pad_y)),
+                ]
+                if bounded[2] > bounded[0] and bounded[3] > bounded[1]:
+                    rgb, _, _ = self._erase(rgb, bounded)
             stats[unit.id] = (mean, white_ratio)
         rendered = Image.fromarray(rgb)
         for unit in active:
-            self._draw(rendered, unit.zh, unit.bbox, *stats[unit.id])
+            x0, y0, x1, y1 = unit.bbox
+            # Draw into a bounded crop so font antialiasing and stroke pixels
+            # cannot spill one pixel beyond the declared typesetting region.
+            region = rendered.crop((x0, y0, x1, y1))
+            self._draw(region, unit.zh, [0, 0, x1 - x0, y1 - y0], *stats[unit.id])
+            rendered.paste(region, (x0, y0))
         output_path.parent.mkdir(parents=True, exist_ok=True)
         rendered.save(output_path, "PNG", compress_level=5)
         return {

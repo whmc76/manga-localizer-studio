@@ -33,3 +33,7 @@ Evidence artifacts: `docs/screenshots/app-desktop.png` and `docs/screenshots/app
 | 26 | Mobile inspector precedes preview | implemented | measure layout | inspector top 474px; preview top 1057px | PASS |
 | 27 | All primary controls keyboard accessible | implemented | keyboard check | native controls and visible focus; Tab reached input | PASS |
 | 28 | No old/placeholder module remains | implemented | inspect DOM | `[data-placeholder]` count 0 | PASS |
+| 29 | Inference backend selector | implemented | API + DOM contract | built-in, Ollama, and online modes persist | PASS |
+| 30 | Backend-aware model requirements | implemented | model manager regression | Hy-MT2 optional outside built-in mode | PASS |
+| 31 | Online privacy disclosure | implemented | verify backend UI state | images stay local; OCR text disclosure shown | PASS |
+| 32 | Connection test and model discovery | implemented | API adapter tests | Ollama and compatible `/models` supported | PASS |

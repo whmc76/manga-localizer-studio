@@ -62,3 +62,46 @@ def test_derives_non_destructive_output_path(tmp_path):
     response = client.post("/api/paths/derive-output", json={"initial": str(source)})
     assert response.status_code == 200
     assert response.json()["path"] == str(tmp_path / "chapter-01_localized")
+
+
+def test_online_secret_is_memory_only_and_builtin_model_becomes_optional(tmp_path):
+    app_paths = make_paths(tmp_path)
+    client = TestClient(create_app(app_paths, pipeline_factory=FakePipeline))
+    response = client.put(
+        "/api/settings",
+        json={
+            "inference_backend": "online",
+            "online_base_url": "https://example.test/v1",
+            "online_model": "translator-a",
+            "online_api_key": "do-not-persist",
+        },
+    )
+    assert response.status_code == 200
+    assert response.json()["online_api_key_configured"] is True
+    assert "online_api_key" not in response.json()
+    assert "do-not-persist" not in app_paths.settings.read_text(encoding="utf-8")
+    models = {item["id"]: item for item in client.get("/api/models").json()["models"]}
+    assert models["hy-mt2"]["required"] is False
+
+
+def test_inference_check_lists_remote_models(monkeypatch, tmp_path):
+    monkeypatch.setattr(
+        "manga_localizer.api.available_remote_models",
+        lambda backend, base_url, api_key: ["qwen-test"],
+    )
+    client = TestClient(create_app(make_paths(tmp_path), pipeline_factory=FakePipeline))
+    response = client.post(
+        "/api/inference/check",
+        json={
+            "inference_backend": "ollama",
+            "ollama_base_url": "http://127.0.0.1:11434",
+            "ollama_model": "qwen-test",
+        },
+    )
+    assert response.status_code == 200
+    assert response.json() == {
+        "ok": True,
+        "backend": "ollama",
+        "message": "已连接，发现 1 个模型",
+        "models": ["qwen-test"],
+    }

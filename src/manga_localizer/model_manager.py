@@ -34,8 +34,8 @@ MODEL_REGISTRY = (
         name="PaddleOCR",
         role="文字区域检测",
         provider="ModelScope via PaddleX",
-        repository="PP-OCRv5_mobile_det + PP-OCRv5_server_rec",
-        size="~180 MB",
+        repository="PP-OCRv5_mobile_det",
+        size="~5 MB",
         license="Apache-2.0",
     ),
     ModelSpec(
@@ -80,10 +80,11 @@ class ModelManager:
         except (json.JSONDecodeError, OSError):
             return False
 
-    def status(self) -> list[dict]:
+    def status(self, inference_backend: str = "builtin") -> list[dict]:
         return [
             {
                 **asdict(spec),
+                "required": spec.id != "hy-mt2" or inference_backend == "builtin",
                 "ready": self.is_ready(spec.id),
                 "path": str(self.model_dir(spec.id)),
             }
@@ -127,16 +128,13 @@ class ModelManager:
             MangaOcr(force_cpu=True)
         elif model_id == "paddleocr":
             self._require("paddleocr")
-            from paddleocr import PaddleOCR
+            from paddleocr import TextDetection
 
             callback(15, "Downloading PaddleOCR models through ModelScope/PaddleX")
-            PaddleOCR(
-                text_detection_model_name="PP-OCRv5_mobile_det",
-                text_recognition_model_name="PP-OCRv5_server_rec",
-                use_doc_orientation_classify=False,
-                use_doc_unwarping=False,
-                use_textline_orientation=True,
+            TextDetection(
+                model_name="PP-OCRv5_mobile_det",
                 device="cpu",
+                enable_mkldnn=False,
             )
         callback(95, f"Verifying {spec.name}")
         self.mark_ready(model_id, {"repository": spec.repository, "provider": spec.provider})
