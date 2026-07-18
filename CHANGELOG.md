@@ -1,5 +1,10 @@
 # Changelog
 
+## 0.4.3 - 2026-07-19
+
+- Pin the verified Torch 2.8.0 and Torchvision 0.23.0 pair for CPU and CUDA 12.9 instead of relying on ambiguous index metadata.
+- Make bootstrap diagnostics import and validate the ML runtime, so an incompatible Torchvision installation can no longer be reported as ready.
+
 ## 0.4.2 - 2026-07-18
 
 - Allow the Torchvision 0.23 build paired with Torch 2.8 on PyTorch's CUDA 12.9 Windows index, keeping the hardware-aware overlay consistent with project metadata.

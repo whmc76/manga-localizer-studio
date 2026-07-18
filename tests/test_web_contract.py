@@ -50,6 +50,9 @@ def test_ml_bootstrap_installs_matching_torchvision_backend():
     project = (ROOT / "pyproject.toml").read_text(encoding="utf-8")
     powershell = (ROOT / "scripts" / "bootstrap.ps1").read_text(encoding="utf-8")
     shell = (ROOT / "scripts" / "bootstrap.sh").read_text(encoding="utf-8")
-    assert '"torchvision>=0.23,<1"' in project
-    assert '$TorchPackages = @("torch", "torchvision")' in powershell
-    assert "torch torchvision --index-url" in shell
+    assert '"torch==2.8.0"' in project
+    assert '"torchvision==0.23.0"' in project
+    assert '"torch==2.8.0+cu129", "torchvision==0.23.0+cu129"' in powershell
+    assert "'torch==2.8.0+cu129' 'torchvision==0.23.0+cu129'" in shell
+    assert "doctor --require-ml" in powershell
+    assert "doctor --require-ml" in shell
