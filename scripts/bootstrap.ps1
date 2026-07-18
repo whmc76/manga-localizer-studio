@@ -10,7 +10,7 @@ $ErrorActionPreference = "Stop"
 $ProjectRoot = Split-Path -Parent $PSScriptRoot
 $VenvPath = Join-Path $ProjectRoot ".venv"
 $PythonPath = Join-Path $VenvPath "Scripts\python.exe"
-$TorchPackages = @("torch", "torchvision")
+$TorchPackages = @("torch==2.8.0+cu129", "torchvision==0.23.0+cu129")
 $PaddleGpuPackages = @(
     "paddlepaddle-gpu",
     "nvidia-cublas-cu12",
@@ -38,7 +38,7 @@ if ($UvCommand) {
     if ($Profile -eq "cuda129") {
         & uv pip install --python $PythonPath --reinstall @TorchPackages --index-url https://download.pytorch.org/whl/cu129
     } else {
-        & uv pip install --python $PythonPath --reinstall @TorchPackages --index-url https://download.pytorch.org/whl/cpu
+        & uv pip install --python $PythonPath --reinstall "torch==2.8.0+cpu" "torchvision==0.23.0+cpu" --index-url https://download.pytorch.org/whl/cpu
     }
 } else {
     Write-Warning "uv is not installed; using the compatible venv + pip path. Install uv for locked, faster setup."
@@ -56,7 +56,7 @@ if ($UvCommand) {
     if ($Profile -eq "cuda129") {
         & $PythonPath -m pip install @TorchPackages --index-url https://download.pytorch.org/whl/cu129
     } else {
-        & $PythonPath -m pip install @TorchPackages --index-url https://download.pytorch.org/whl/cpu
+        & $PythonPath -m pip install "torch==2.8.0+cpu" "torchvision==0.23.0+cpu" --index-url https://download.pytorch.org/whl/cpu
     }
 }
 
@@ -64,5 +64,5 @@ if ($UvCommand) {
 if (-not $SkipModels) {
     & $PythonPath -m manga_localizer.cli models download all
 }
-& $PythonPath -m manga_localizer.cli doctor
+& $PythonPath -m manga_localizer.cli doctor --require-ml
 Write-Host "Ready. Start with: .\start-windows.bat" -ForegroundColor Green

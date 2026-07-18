@@ -145,11 +145,33 @@ def _font_status(finder, paths: AppPaths) -> str:
         return "missing; run manga-localizer assets download"
 
 
+def torch_pair_compatible(torch_version: str, torchvision_version: str) -> bool:
+    return torch_version.split("+", 1)[0] == "2.8.0" and torchvision_version.split("+", 1)[0] == "0.23.0"
+
+
+def _ml_runtime_status() -> dict:
+    try:
+        import torch
+        import torchvision
+
+        ready = torch_pair_compatible(torch.__version__, torchvision.__version__)
+        return {
+            "ready": ready,
+            "torch": torch.__version__,
+            "torchvision": torchvision.__version__,
+            "cuda_available": torch.cuda.is_available(),
+            "error": "" if ready else "Expected Torch 2.8.0 with Torchvision 0.23.0",
+        }
+    except Exception as exc:
+        return {"ready": False, "torch": "missing", "torchvision": "missing", "error": str(exc)}
+
+
 @app.command()
-def doctor():
+def doctor(require_ml: bool = typer.Option(False, help="Fail if the pinned ML runtime cannot load.")):
     """Print environment and cache diagnostics."""
     paths = AppPaths.from_env().ensure()
     settings = UserSettings.load(paths.settings)
+    ml_runtime = _ml_runtime_status()
     payload = {
         "version": __version__,
         "home": str(paths.root),
@@ -159,8 +181,11 @@ def doctor():
         ),
         "font": _font_status(find_font, paths),
         "bold_font": _font_status(find_bold_font, paths),
+        "ml_runtime": ml_runtime,
     }
     typer.echo(json.dumps(payload, ensure_ascii=False, indent=2))
+    if require_ml and not ml_runtime["ready"]:
+        raise typer.Exit(code=1)
 
 
 if __name__ == "__main__":

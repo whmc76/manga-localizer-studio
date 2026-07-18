@@ -1,12 +1,12 @@
 # Verification report
 
-Date: 2026-07-18
+Date: 2026-07-19
 
 ## Automated checks
 
-- 49 unit/API/contract tests passed on Windows with Python 3.12.
-- `uv sync --locked --extra ml --extra test --dry-run` resolved the complete 0.4.2 environment, including a Torch-compatible Torchvision build.
-- A CUDA 12.9 overlay dry-run resolved the official Windows/Python 3.12 pair Torch 2.8 + Torchvision 0.23 without violating project metadata.
+- 50 unit/API/contract tests passed on Windows with Python 3.12.
+- `uv sync --locked --extra ml --extra test --dry-run` resolved the complete 0.4.3 environment with the pinned Torch 2.8.0 and Torchvision 0.23.0 pair.
+- The CUDA 12.9 overlay installed Torch 2.8.0+cu129 and Torchvision 0.23.0+cu129; both imported successfully, CUDA was available, and the RTX 5090 was detected.
 - Renderer regressions cover native-resolution LaMa boundaries, exact unmasked-pixel restoration, source-driven outlined display text, bold balloon text, furigana outside the main OCR box, and lossless output.
 - OCR regressions cover ordinary Paddle regions, local Ollama vision calls, and conservative light-on-dark title discovery without page, coordinate, filename, or phrase rules.
 - Model regressions cover checksum validation, atomic Big-LaMa installation, backend-dependent requirements, and the four-model UI contract.

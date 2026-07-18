@@ -43,6 +43,8 @@ cd manga-localizer-studio
 
 首次启动会自动完成环境安装并打开 `http://127.0.0.1:8765`。默认方案完全在本机运行；先选择 OCR/翻译后端，再点“准备缺失模型”。使用 Ollama 翻译时无需下载 Hy-MT2，使用 Ollama OCR 时无需下载 Paddle/Manga OCR。之后双击 `start-windows.bat` 即可。
 
+从旧版本更新源码后，请运行一次 `.\scripts\bootstrap.ps1 -SkipModels`（Linux 为 `./scripts/bootstrap.sh --skip-models`）同步锁定环境；已有模型权重不会重复下载。
+
 尚未安装 uv 时，可先执行 `winget install --id=astral-sh.uv -e`；这一步不是强制要求。
 
 ### Linux

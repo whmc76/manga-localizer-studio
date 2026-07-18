@@ -1,4 +1,4 @@
-from manga_localizer.cli import _font_status, configure_cli_encoding
+from manga_localizer.cli import _font_status, configure_cli_encoding, torch_pair_compatible
 
 
 class ReconfigurableStream:
@@ -22,3 +22,10 @@ def test_doctor_font_status_is_safe_before_assets_are_downloaded(tmp_path):
         raise FileNotFoundError("no system CJK font")
 
     assert _font_status(missing, tmp_path).startswith("missing;")
+
+
+def test_doctor_requires_the_pinned_torch_runtime_pair():
+    assert torch_pair_compatible("2.8.0+cu129", "0.23.0+cu129")
+    assert torch_pair_compatible("2.8.0+cpu", "0.23.0+cpu")
+    assert not torch_pair_compatible("2.9.0+cu129", "0.23.0+cu129")
+    assert not torch_pair_compatible("2.8.0+cu129", "0.1.6")
