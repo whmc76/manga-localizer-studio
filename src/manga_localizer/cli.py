@@ -15,7 +15,7 @@ from .api import create_app
 from .config import AppPaths, UserSettings
 from .model_manager import MODEL_REGISTRY, ModelManager
 from .pipeline import LocalizerPipeline, PipelineRequest
-from .renderer import ensure_font, find_font
+from .renderer import ensure_bold_font, ensure_font, find_bold_font, find_font
 
 
 def configure_cli_encoding(*streams) -> None:
@@ -63,11 +63,14 @@ def run_pipeline(
     story_context: bool = typer.Option(True, "--story-context/--no-story-context"),
     preserve_sfx: bool = typer.Option(False, "--preserve-sfx/--translate-sfx"),
     quality_profile: str = typer.Option("quality", "--quality-profile"),
+    output_format: str = typer.Option("webp", "--output-format"),
     reviewed_transcript: Path | None = typer.Option(None, "--reviewed-transcript", exists=True),
     device: str = typer.Option("auto"),
     inference_backend: str = typer.Option("builtin", "--backend"),
+    ocr_backend: str = typer.Option("builtin", "--ocr-backend"),
     ollama_base_url: str = typer.Option("http://127.0.0.1:11434", "--ollama-url"),
     ollama_model: str = typer.Option("qwen2.5:7b", "--ollama-model"),
+    ollama_ocr_model: str = typer.Option("qwen2.5vl:7b", "--ollama-ocr-model"),
     online_base_url: str = typer.Option("https://api.openai.com/v1", "--online-url"),
     online_model: str = typer.Option("", "--online-model"),
 ):
@@ -81,10 +84,13 @@ def run_pipeline(
         story_context=story_context,
         preserve_sfx=preserve_sfx,
         quality_profile=quality_profile,
+        output_format=output_format,
         device=device,
         inference_backend=inference_backend,
+        ocr_backend=ocr_backend,
         ollama_base_url=ollama_base_url,
         ollama_model=ollama_model,
+        ollama_ocr_model=ollama_ocr_model,
         online_base_url=online_base_url,
         online_model=online_model,
         online_api_key=os.environ.get("MLS_ONLINE_API_KEY", ""),
@@ -124,9 +130,12 @@ def model_download(model_id: str = typer.Argument("all")):
 
 @assets_app.command("download")
 def asset_download():
-    """Download the pinned Simplified Chinese font into the app data folder."""
-    path = ensure_font(AppPaths.from_env().ensure(), force_managed=True)
-    typer.echo(f"CJK font ready: {path}")
+    """Download pinned regular and bold Simplified Chinese fonts."""
+    paths = AppPaths.from_env().ensure()
+    regular = ensure_font(paths, force_managed=True)
+    bold = ensure_bold_font(paths, force_managed=True)
+    typer.echo(f"CJK regular font ready: {regular}")
+    typer.echo(f"CJK bold font ready: {bold}")
 
 
 @app.command()
@@ -142,8 +151,11 @@ def doctor():
         "version": __version__,
         "home": str(paths.root),
         "settings": settings.__dict__,
-        "models": ModelManager(paths).status(settings.inference_backend),
+        "models": ModelManager(paths).status(
+            settings.inference_backend, settings.quality_profile, settings.ocr_backend
+        ),
         "font": font,
+        "bold_font": str(find_bold_font(paths)),
     }
     typer.echo(json.dumps(payload, ensure_ascii=False, indent=2))
 

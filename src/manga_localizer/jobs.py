@@ -46,13 +46,16 @@ class JobStore:
                 "context_pages": request.context_pages,
                 "preserve_sfx": request.preserve_sfx,
                 "quality_profile": request.quality_profile,
+                "output_format": request.output_format,
                 "reviewed_transcript": (
                     str(request.reviewed_transcript) if request.reviewed_transcript else None
                 ),
                 "device": request.device,
                 "inference_backend": request.inference_backend,
+                "ocr_backend": request.ocr_backend,
                 "ollama_base_url": request.ollama_base_url,
                 "ollama_model": request.ollama_model,
+                "ollama_ocr_model": request.ollama_ocr_model,
                 "online_base_url": request.online_base_url,
                 "online_model": request.online_model,
                 "glossary": request.glossary or {},

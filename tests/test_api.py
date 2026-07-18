@@ -29,7 +29,7 @@ def make_paths(tmp_path):
 def test_health_models_and_job_flow(tmp_path):
     client = TestClient(create_app(make_paths(tmp_path), pipeline_factory=FakePipeline))
     assert client.get("/api/health").json()["status"] == "ok"
-    assert len(client.get("/api/models").json()["models"]) == 3
+    assert len(client.get("/api/models").json()["models"]) == 4
     source = tmp_path / "source"
     source.mkdir()
     Image.new("RGB", (32, 32), "white").save(source / "1.png")

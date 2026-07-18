@@ -13,6 +13,8 @@ def test_navigation_and_pipeline_contract():
     assert 'id="nextPage" aria-label="下一页" disabled' in html
     assert 'id="inferenceBackend"' in html
     assert 'id="inferenceBackendSetting"' in html
+    assert 'id="ocrBackend"' in html
+    assert 'id="ollamaOcrModel"' in html
     assert 'id="checkInference"' in html
 
 
@@ -21,5 +23,5 @@ def test_ocr_phase_uses_zero_based_dom_index():
     assert 'if(job?.phase==="ocr")return' in javascript
     assert '>=.5?1:0' in javascript
     assert "const active=phaseIndex(job)" in javascript
-    assert "state.activeBackend!==backend" in javascript
+    assert 'state.activeBackend!==`${backend}:${ocr}`' in javascript
     assert 'textContent="尚未测试连接"' in javascript
