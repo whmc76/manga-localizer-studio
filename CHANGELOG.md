@@ -5,6 +5,7 @@
 - Automatically provision a pinned OFL CJK font on minimal Windows/Linux systems.
 - Validate font downloads before atomic installation.
 - Update GitHub Actions to Node 24-based action releases.
+- Normalize CLI output to UTF-8 on Windows runners and legacy code pages.
 
 ## 0.1.0 - 2026-07-18
 

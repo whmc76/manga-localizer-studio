@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import sys
 import threading
 import time
 import webbrowser
@@ -14,6 +15,18 @@ from .config import AppPaths, UserSettings
 from .model_manager import MODEL_REGISTRY, ModelManager
 from .pipeline import LocalizerPipeline, PipelineRequest
 from .renderer import ensure_font, find_font
+
+
+def configure_cli_encoding(*streams) -> None:
+    """Use UTF-8 at the CLI boundary while keeping redirected streams compatible."""
+    active_streams = streams or (sys.stdout, sys.stderr)
+    for stream in active_streams:
+        reconfigure = getattr(stream, "reconfigure", None)
+        if callable(reconfigure):
+            reconfigure(encoding="utf-8", errors="backslashreplace")
+
+
+configure_cli_encoding()
 
 
 app = typer.Typer(help="Local-first manga localization workspace.", no_args_is_help=True)
