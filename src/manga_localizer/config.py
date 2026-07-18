@@ -40,11 +40,14 @@ class UserSettings:
     context_pages: int = 3
     preserve_sfx: bool = False
     quality_profile: str = "quality"
+    output_format: str = "webp"
     prefer_modelscope: bool = True
     device: str = "auto"
+    ocr_backend: str = "builtin"
     inference_backend: str = "builtin"
     ollama_base_url: str = "http://127.0.0.1:11434"
     ollama_model: str = "qwen2.5:7b"
+    ollama_ocr_model: str = "qwen2.5vl:7b"
     online_base_url: str = "https://api.openai.com/v1"
     online_model: str = ""
 

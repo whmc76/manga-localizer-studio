@@ -4,45 +4,30 @@ Date: 2026-07-18
 
 ## Automated checks
 
-- 33 unit/API/contract tests passed on Windows with Python 3.12.
-- Source distribution and wheel built successfully.
-- Python source compiled with `compileall`.
-- PowerShell bootstrap parsed without errors; Git Bash accepted both shell scripts.
-- Renderer regressions cover both complete quality cleanup and conservative artwork cleanup inside bounded text regions.
-- Managed-font download is header/size validated and atomically installed.
+- 46 unit/API/contract tests passed on Windows with Python 3.12.
+- `uv lock --check` passed; the 0.4.0 source distribution and wheel built successfully.
+- Renderer regressions cover native-resolution LaMa boundaries, exact unmasked-pixel restoration, source-driven outlined display text, bold balloon text, furigana outside the main OCR box, and lossless output.
+- OCR regressions cover ordinary Paddle regions, local Ollama vision calls, and conservative light-on-dark title discovery without page, coordinate, filename, or phrase rules.
+- Model regressions cover checksum validation, atomic Big-LaMa installation, backend-dependent requirements, and the four-model UI contract.
 
 ## Full-book acceptance test
 
-- Imported the reviewed transcript and rerendered a 125-page, 2126×3661 source book (final page 2800×3808) through the v0.3 pipeline.
-- Produced 125 PNG files and a 125-page transcript; every output dimension matched its source.
-- Rendered 811 reviewed Chinese units; 231 explicitly reviewed fragments/effects remained skipped or preserved.
-- Full pixel comparison across all 125 pages found zero changed pixels outside declared cleanup/typesetting regions.
-- A fresh default quality-OCR smoke test detected 15 grouped units on page 3, compared with 6 in the regressed detection-only run.
+- Imported the reviewed transcript and rerendered a 125-page, 2126×3661 source book (final page 2800×3808) through the 0.4.0 CLI.
+- Produced 125 lossless WebP files; every output dimension matched its source.
+- Classified all 1,043 detected units: 949 valid Chinese replacements, 94 explicit duplicate/symbol preserves, zero unresolved units, and zero invalid translation fields.
+- The default OCR was reproduced on a previously missed reversed title page: Paddle returned no box, the generic light-on-dark candidate pass found the title, and MangaOCR recognized the complete Japanese text.
+- Full decoded-pixel comparison across all 125 pages found zero changed pixels outside declared cleanup/typesetting regions.
+- Output size is 239.0 MiB, compared with 173.2 MiB for lossy source images and 467.1 MiB for the former PNG output (1.38× versus 2.70× source size).
 
-## Browser checks
+## UI checks
 
-The real FastAPI application was inspected with Playwright, not a static mock.
+- API and DOM contract tests cover all four navigation views, model readiness, independent OCR/translation backend selectors, conditional Ollama/online fields, quality-profile labels, and output-format selection.
+- The previously captured desktop/mobile layout contract remains unchanged. A fresh live browser pass was unavailable in this Windows session because the in-app browser kernel could not install its runtime assets; this is an environment limitation, not counted as a visual pass.
 
-| Check | Desktop 1536×1024 | Mobile 390×844 |
-|---|---:|---:|
-| Document scroll width / client width | 1536 / 1536 | 390 / 390 |
-| Sidebar width / position | 232px | fixed 64px bottom navigation |
-| Topbar height | 72px | 62px |
-| Model rows from API | 3 | 3 |
-| Inspector before preview | n/a | 474px / 1057px top |
-| Console errors | 0 | 0 |
+## User-reported regressions
 
-Interactions checked: all four navigation views, quick-start dialog, model refresh,
-backend switching, conditional Ollama/online fields, failed-connection recovery,
-keyboard focus, empty preview boundaries, and phase-to-step state mapping.
-
-## Adversarial user complaints
-
-- “模型明明没下，为什么显示可用？” — the UI renders `未下载` from `/api/models`
-  and disables Start until all required model markers exist.
-- “手机上还没设置就先看到一大块预览。” — the mobile inspector is ordered before
-  preview; measured tops are 474px and 1057px.
-- “刚开始 OCR，怎么第二步已经亮了？” — the zero/one-based phase mapping was fixed;
-  browser simulation verifies detect → OCR → translate → render.
-- “我担心它覆盖原图。” — equal source/output paths are rejected by API and pipeline,
-  and renderer output is always PNG in a distinct directory.
+- Missed full pages: reversed light-on-dark title regions now enter the default OCR pipeline; the regression book has no untranslated text-bearing page.
+- Poor artwork fill: quality mode uses bounded native-resolution Big-LaMa and copies all unmasked source pixels back exactly.
+- Weak style matching: fill, outline, weight, orientation, and scale are inferred from source pixels; bold CJK fonts and thick contrasting strokes are supported.
+- Oversized files: lossless WebP is the default, while PNG remains selectable.
+- Accidental source overwrite: equal source/output paths are rejected by the API and pipeline, and output always goes to a distinct directory.

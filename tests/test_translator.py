@@ -111,3 +111,14 @@ def test_translation_quality_gate_allows_natural_chinese_expansion():
     assert PromptTranslator._valid_translation(
         unit, "大家不是搬走了，就是不再来了。"
     ) is True
+
+
+def test_reviewed_valid_translation_is_not_sent_through_model_again():
+    valid = TextUnit(
+        "p001u01", [0, 0, 20, 20], [0, 0, 20, 20], "秘密", 1.0, zh="秘密"
+    )
+    invalid = TextUnit(
+        "p001u02", [20, 0, 40, 20], [20, 0, 40, 20], "ニュプ", 1.0, zh="ニュプ"
+    )
+    assert PromptTranslator._needs_translation(valid, preserve_sfx=False) is False
+    assert PromptTranslator._needs_translation(invalid, preserve_sfx=False) is True

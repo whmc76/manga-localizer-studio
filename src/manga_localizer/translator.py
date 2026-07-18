@@ -91,6 +91,14 @@ class PromptTranslator:
         match = LINE_RE.match(line)
         return (match.group(2) if match else line).strip(" \"“”")
 
+    @classmethod
+    def _needs_translation(cls, unit: TextUnit, preserve_sfx: bool) -> bool:
+        return (
+            not unit.skip
+            and not (preserve_sfx and unit.is_sfx)
+            and not cls._valid_translation(unit, unit.zh)
+        )
+
     def translate_pages(
         self,
         pages: list[PageOCR],
@@ -109,7 +117,7 @@ class PromptTranslator:
                 unit
                 for page in chunk
                 for unit in page.units
-                if not unit.skip and not (preserve_sfx and unit.is_sfx)
+                if self._needs_translation(unit, preserve_sfx)
             ]
             if not units:
                 if progress:
@@ -121,7 +129,7 @@ class PromptTranslator:
                 source_rows.extend(
                     f"[{unit.id}] {unit.ja}"
                     for unit in page.units
-                    if not unit.skip and not (preserve_sfx and unit.is_sfx)
+                    if self._needs_translation(unit, preserve_sfx)
                 )
             previous = pages[max(0, start - context_pages) : start] if story_context else []
             prompt = f"""【背景信息】

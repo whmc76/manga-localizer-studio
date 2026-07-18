@@ -1,5 +1,25 @@
 # Changelog
 
+## 0.4.0 - 2026-07-18
+
+- Replace destructive text-box cleanup in quality mode with pinned Big-LaMa inpainting; inference stays at native geometry and restores every unmasked pixel exactly.
+- Detect display lettering, vertical multi-column text, font scale, weight, foreground, and contrasting stroke from source pixels without a multimodal LLM.
+- Add managed Noto Sans CJK SC Bold and remove the former 92 px vertical-font ceiling, allowing large outlined Chinese titles to match the source composition.
+- Expand cleanup around detected regions to include furigana and thick source outlines while keeping the declared edit boundary bounded and verifiable.
+- Add a conservative light-on-dark title candidate pass so reversed manga lettering is not silently missed by the default detector; MangaOCR must still confirm Japanese text.
+- Add Ollama as an optional local vision-OCR backend as well as a translation backend; OCR and translation model choices are independent.
+- Default to lossless WebP to reduce PNG size inflation, while retaining lossless PNG as a compatibility option.
+- Add checksum-validated, atomic LaMa weight download and Apache-2.0 model attribution.
+- Add generic synthetic regressions for outlined display text and white speech bubbles plus a TorchScript boundary test proving that LaMa cannot alter unmasked pixels.
+
+## 0.3.1 - 2026-07-18
+
+- Separate explicit reviewer skips from unresolved text; legacy `skip: true` entries no longer pass as completed work.
+- Refuse to render or verify a book while any detected text unit remains unresolved, including non-empty "translations" that still contain Japanese kana or leaked prompt context.
+- Record translated, explicitly skipped, preserved sound-effect, and unresolved counts in manifests and QA reports.
+- Decouple OCR quality from cleanup aggressiveness; quality OCR now uses edge-aware artwork cleanup instead of destructive full-box erasure.
+- Re-audit the 125-page regression book: 948 valid Chinese replacements, zero unresolved or kana-bearing translation fields, and zero pixels changed outside declared text regions.
+
 ## 0.3.0 - 2026-07-18
 
 - Restore full PaddleOCR line-level recognition as the default quality profile; retain detection-only OCR as an explicit fast preview.

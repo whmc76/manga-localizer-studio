@@ -8,9 +8,23 @@ from typing import Callable
 from PIL import Image
 
 from .config import AppPaths, UserSettings
-from .ocr import PageOCR, PaddleMangaOCR, TextUnit, list_images
+from .ocr import (
+    EXPLICIT_SKIP_REASONS,
+    UNRESOLVED_SKIP_REASON,
+    PageOCR,
+    OllamaVisionOCR,
+    PaddleMangaOCR,
+    TextUnit,
+    list_images,
+)
 from .renderer import ArtworkPreservingRenderer
-from .translator import HyMTTranslator, OllamaTranslator, OpenAICompatibleTranslator
+from .model_manager import ModelManager
+from .translator import (
+    HyMTTranslator,
+    OllamaTranslator,
+    OpenAICompatibleTranslator,
+    PromptTranslator,
+)
 
 
 ProgressCallback = Callable[[str, int, int, str], None]
@@ -25,11 +39,14 @@ class PipelineRequest:
     context_pages: int = 3
     preserve_sfx: bool = False
     quality_profile: str = "quality"
+    output_format: str = "webp"
     device: str = "auto"
     glossary: dict[str, str] | None = None
     inference_backend: str = "builtin"
+    ocr_backend: str = "builtin"
     ollama_base_url: str = "http://127.0.0.1:11434"
     ollama_model: str = "qwen2.5:7b"
+    ollama_ocr_model: str = "qwen2.5vl:7b"
     online_base_url: str = "https://api.openai.com/v1"
     online_model: str = ""
     online_api_key: str = ""
@@ -66,7 +83,14 @@ class LocalizerPipeline:
             self._validate_reviewed_pages(files, pages)
             self._emit(emit, "ocr", total, total, f"已导入审校稿 {transcript_path.name}")
         else:
-            ocr = PaddleMangaOCR(self.paths, request.device, request.quality_profile)
+            if request.ocr_backend == "builtin":
+                ocr = PaddleMangaOCR(self.paths, request.device, request.quality_profile)
+            elif request.ocr_backend == "ollama":
+                ocr = OllamaVisionOCR(
+                    request.ollama_base_url, request.ollama_ocr_model
+                )
+            else:
+                raise ValueError(f"Unknown OCR backend: {request.ocr_backend}")
             for index, image_path in enumerate(files, start=1):
                 self._emit(emit, "ocr", index - 1, total, f"识别 {image_path.name}")
                 page = ocr.analyze(image_path, index)
@@ -77,7 +101,11 @@ class LocalizerPipeline:
                 self._emit(emit, "ocr", index, total, f"已识别 {image_path.name}")
 
         needs_translation = any(
-            not unit.skip and not unit.zh for page in pages for unit in page.units
+            not unit.skip
+            and not (request.preserve_sfx and unit.is_sfx)
+            and not PromptTranslator._valid_translation(unit, unit.zh)
+            for page in pages
+            for unit in page.units
         )
         self._emit(emit, "translate", 0, total, "加载翻译后端" if needs_translation else "审校稿已包含译文")
         if not needs_translation:
@@ -114,18 +142,42 @@ class LocalizerPipeline:
                     emit, "translate", current, count, f"已翻译 {current}/{count} 页"
                 ),
             )
+        quality = completion_summary(pages, request.preserve_sfx)
+        if quality["unresolved_units"]:
+            sample = ", ".join(quality["unresolved_ids"][:8])
+            raise ValueError(
+                f"Localization has {quality['unresolved_units']} unresolved text units"
+                f" ({sample}). Translate them or assign an explicit skip_reason."
+            )
         self._emit(emit, "translate", total, total, "连贯翻译完成")
         transcript = {"source": str(source), "pages": [page.to_dict() for page in pages]}
         (work / "transcript.json").write_text(
             json.dumps(transcript, ensure_ascii=False, indent=2), encoding="utf-8"
         )
 
-        renderer = ArtworkPreservingRenderer(cleanup_profile=request.quality_profile)
+        if request.quality_profile == "quality":
+            manager = ModelManager(self.paths)
+            if not manager.lama_weights_path().exists():
+                self._emit(emit, "render", 0, total, "首次使用：下载 LaMa 补画模型")
+                manager.download(
+                    "lama",
+                    lambda value, message: self._emit(
+                        emit, "render", 0, total, f"{message} {value}%"
+                    ),
+                )
+        renderer = ArtworkPreservingRenderer(
+            cleanup_profile=request.quality_profile,
+            paths=self.paths,
+            device=request.device,
+        )
         manifest = []
+        if request.output_format not in {"webp", "png"}:
+            raise ValueError(f"Unknown lossless output format: {request.output_format}")
+        suffix = ".webp" if request.output_format == "webp" else ".png"
         for index, page in enumerate(pages, start=1):
             self._emit(emit, "render", index - 1, total, f"替换第 {index} 页文字")
             source_path = source / page.file
-            output_path = output / f"{source_path.stem}.png"
+            output_path = output / f"{source_path.stem}{suffix}"
             manifest.append(
                 renderer.render_page(source_path, page, output_path, request.preserve_sfx)
             )
@@ -137,6 +189,7 @@ class LocalizerPipeline:
             "pages": total,
             "images": manifest,
             "transcript": str(work / "transcript.json"),
+            "quality": quality,
         }
         (output / "translation_manifest.json").write_text(
             json.dumps(result, ensure_ascii=False, indent=2), encoding="utf-8"
@@ -160,6 +213,19 @@ class LocalizerPipeline:
                     raise ValueError(
                         f"Reviewed transcript page {index} dimensions do not match source"
                     )
+        ambiguous = [
+            unit.id
+            for page in pages
+            for unit in page.units
+            if unit.skip and unit.skip_reason not in EXPLICIT_SKIP_REASONS
+        ]
+        if ambiguous:
+            sample = ", ".join(ambiguous[:8])
+            raise ValueError(
+                f"Reviewed transcript has {len(ambiguous)} ambiguous skipped units"
+                f" ({sample}). Legacy skip=true is unresolved; use one of: "
+                f"{', '.join(sorted(EXPLICIT_SKIP_REASONS))}."
+            )
 
 
 def request_from_settings(source: Path, output: Path, settings: UserSettings) -> PipelineRequest:
@@ -171,10 +237,13 @@ def request_from_settings(source: Path, output: Path, settings: UserSettings) ->
         context_pages=settings.context_pages,
         preserve_sfx=settings.preserve_sfx,
         quality_profile=settings.quality_profile,
+        output_format=settings.output_format,
         device=settings.device,
         inference_backend=settings.inference_backend,
+        ocr_backend=settings.ocr_backend,
         ollama_base_url=settings.ollama_base_url,
         ollama_model=settings.ollama_model,
+        ollama_ocr_model=settings.ollama_ocr_model,
         online_base_url=settings.online_base_url,
         online_model=settings.online_model,
     )
@@ -196,8 +265,47 @@ def page_from_dict(payload: dict) -> PageOCR:
                 is_sfx=bool(unit.get("is_sfx", False)),
                 zh=unit.get("zh", ""),
                 skip=bool(unit.get("skip", False)),
+                skip_reason=(
+                    str(unit.get("skip_reason", "")).strip()
+                    or (UNRESOLVED_SKIP_REASON if bool(unit.get("skip", False)) else "")
+                ),
                 erase_boxes=unit.get("erase_boxes", []),
+                special=str(unit.get("special", "")).strip(),
             )
             for unit in payload["units"]
         ],
     )
+
+
+def completion_summary(pages: list[PageOCR], preserve_sfx: bool = False) -> dict:
+    """Classify every OCR unit; unresolved work must remain visible to callers."""
+    translated = explicit_skips = preserved_sfx_count = 0
+    unresolved_ids: list[str] = []
+    invalid_translation_ids: list[str] = []
+    for page in pages:
+        for unit in page.units:
+            if unit.skip:
+                if unit.skip_reason in EXPLICIT_SKIP_REASONS:
+                    explicit_skips += 1
+                else:
+                    unresolved_ids.append(unit.id)
+            elif preserve_sfx and unit.is_sfx:
+                preserved_sfx_count += 1
+            elif unit.zh.strip():
+                if PromptTranslator._valid_translation(unit, unit.zh):
+                    translated += 1
+                else:
+                    invalid_translation_ids.append(unit.id)
+                    unresolved_ids.append(unit.id)
+            else:
+                unresolved_ids.append(unit.id)
+    return {
+        "total_units": translated + explicit_skips + preserved_sfx_count + len(unresolved_ids),
+        "translated_units": translated,
+        "explicitly_skipped_units": explicit_skips,
+        "preserved_sfx_units": preserved_sfx_count,
+        "unresolved_units": len(unresolved_ids),
+        "unresolved_ids": unresolved_ids,
+        "invalid_translation_units": len(invalid_translation_ids),
+        "invalid_translation_ids": invalid_translation_ids,
+    }

@@ -72,7 +72,9 @@
 
               <section class="panel settings-panel" data-testid="translation-settings">
                 <div class="section-title"><span>翻译设置</span></div>
-                <label class="context-row"><span>处理质量</span><select id="qualityProfile"><option value="quality">质量优先（推荐）</option><option value="fast">快速预览</option></select></label>
+                <label class="context-row"><span>处理质量</span><select id="qualityProfile"><option value="quality">质量优先（LaMa 补画＋原字样式匹配）</option><option value="fast">快速预览（传统补画）</option></select></label>
+                <label class="context-row"><span>输出格式</span><select id="outputFormat"><option value="webp">无损 WebP（推荐，体积较小）</option><option value="png">无损 PNG（兼容优先）</option></select></label>
+                <label class="context-row"><span>OCR 后端</span><select id="ocrBackend"><option value="builtin">内置专用 OCR（推荐）</option><option value="ollama">本机 Ollama 视觉模型</option></select></label>
                 <label class="context-row"><span>推理后端</span><select id="inferenceBackend"><option value="builtin">内置 Hy-MT2</option><option value="ollama">本机 Ollama</option><option value="online">在线兼容 API</option></select></label>
                 <label class="toggle-row"><span><b>故事连贯模式</b><small>参考相邻页面调整人名和语气</small></span><input id="storyContext" type="checkbox"><i></i></label>
                 <label class="context-row"><span>上下文页数</span><div class="counter"><button id="contextMinus" type="button">−</button><output id="contextPages">3</output><button id="contextPlus" type="button">＋</button></div></label>
@@ -96,11 +98,13 @@
         <section id="settingsView" class="view utility-view" data-view-panel="settings">
           <div class="utility-head"><div><h2>设置</h2><p>后端配置保存在本机；API 密钥仅保留在当前服务进程或环境变量中。</p></div><button id="checkInference" class="primary-small">测试推理连接</button></div>
           <div class="panel settings-form">
+            <label>OCR 后端<select id="ocrBackendSetting"><option value="builtin">PaddleOCR＋Manga OCR（完全本地）</option><option value="ollama">Ollama 视觉 OCR（完全本地）</option></select></label>
             <label>推理后端<select id="inferenceBackendSetting"><option value="builtin">内置 Hy-MT2（完全本地）</option><option value="ollama">Ollama（完全本地）</option><option value="online">在线 OpenAI 兼容 API</option></select></label>
             <div id="builtinFields" class="backend-fields"><b>内置翻译模型</b><p>默认使用 ModelScope 下载的 Hy-MT2 1.8B；故事上下文不会离开本机。</p></div>
             <div id="ollamaFields" class="backend-fields" hidden>
               <label>Ollama 地址<input id="ollamaBaseUrl" type="url" value="http://127.0.0.1:11434"></label>
-              <label>模型名称<input id="ollamaModel" list="inferenceModels" placeholder="例如 qwen2.5:7b"></label>
+              <label>翻译模型名称<input id="ollamaModel" list="inferenceModels" placeholder="例如 qwen2.5:7b"></label>
+              <label>视觉 OCR 模型名称<input id="ollamaOcrModel" list="inferenceModels" placeholder="例如 qwen2.5vl:7b"></label>
             </div>
             <div id="onlineFields" class="backend-fields" hidden>
               <label>兼容 API 地址<input id="onlineBaseUrl" type="url" placeholder="https://api.openai.com/v1"></label>

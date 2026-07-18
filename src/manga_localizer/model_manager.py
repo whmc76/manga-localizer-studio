@@ -1,15 +1,23 @@
 from __future__ import annotations
 
 import importlib.util
+import hashlib
 import json
 from dataclasses import asdict, dataclass
 from pathlib import Path
 from typing import Callable
+from urllib.request import Request, urlopen
 
 from .config import AppPaths, configure_model_caches
 
 
 ProgressCallback = Callable[[int, str], None]
+
+LAMA_WEIGHTS_URL = (
+    "https://github.com/enesmsahin/simple-lama-inpainting/releases/download/"
+    "v0.1.0/big-lama.pt"
+)
+LAMA_WEIGHTS_SHA256 = "7ba7aa7ac37a4d41fdbbeba3a2af7ead18058552997e3a3cd1a3b2210c9e6b4c"
 
 
 class ModelDependencyError(RuntimeError):
@@ -48,6 +56,15 @@ MODEL_REGISTRY = (
         license="Apache-2.0",
     ),
     ModelSpec(
+        id="lama",
+        name="Big-LaMa",
+        role="文字区域背景补全",
+        provider="Pinned upstream fallback",
+        repository=LAMA_WEIGHTS_URL,
+        size="~196 MB",
+        license="Apache-2.0",
+    ),
+    ModelSpec(
         id="hy-mt2",
         name="Hy-MT2 1.8B",
         role="连贯翻译",
@@ -74,22 +91,36 @@ class ModelManager:
         marker = self._marker(model_id)
         if not marker.exists():
             return False
+        if model_id == "lama" and not self.lama_weights_path().exists():
+            return False
         try:
             payload = json.loads(marker.read_text(encoding="utf-8"))
             return payload.get("model_id") == model_id
         except (json.JSONDecodeError, OSError):
             return False
 
-    def status(self, inference_backend: str = "builtin") -> list[dict]:
+    def status(
+        self,
+        inference_backend: str = "builtin",
+        quality_profile: str = "quality",
+        ocr_backend: str = "builtin",
+    ) -> list[dict]:
         return [
             {
                 **asdict(spec),
-                "required": spec.id != "hy-mt2" or inference_backend == "builtin",
+                "required": (
+                    (spec.id != "hy-mt2" or inference_backend == "builtin")
+                    and (spec.id != "lama" or quality_profile == "quality")
+                    and (spec.id not in {"paddleocr", "manga-ocr"} or ocr_backend == "builtin")
+                ),
                 "ready": self.is_ready(spec.id),
                 "path": str(self.model_dir(spec.id)),
             }
             for spec in MODEL_REGISTRY
         ]
+
+    def lama_weights_path(self) -> Path:
+        return self.model_dir("lama") / "big-lama.pt"
 
     def mark_ready(self, model_id: str, metadata: dict | None = None) -> None:
         directory = self.model_dir(model_id)
@@ -115,7 +146,39 @@ class ModelManager:
         target.mkdir(parents=True, exist_ok=True)
         callback(5, f"Preparing {spec.name}")
 
-        if model_id == "hy-mt2":
+        if model_id == "lama":
+            # ModelScope has damo/cv_fft_inpainting_lama, but its legacy CV
+            # pipeline pulls a substantially larger dependency graph and is not
+            # currently compatible with the supported Python 3.12 environment.
+            # Keep a transparent, pinned fallback rather than silently fetching
+            # an unversioned binary.
+            weights = self.lama_weights_path()
+            partial = weights.with_suffix(".pt.part")
+            digest = hashlib.sha256()
+            request = Request(
+                LAMA_WEIGHTS_URL,
+                headers={"User-Agent": "Manga-Localizer-Studio/0.3"},
+            )
+            try:
+                with urlopen(request, timeout=180) as response, partial.open("wb") as handle:
+                    total_bytes = int(response.headers.get("Content-Length", "0"))
+                    received = 0
+                    while chunk := response.read(1024 * 1024):
+                        handle.write(chunk)
+                        digest.update(chunk)
+                        received += len(chunk)
+                        if total_bytes:
+                            callback(
+                                min(90, 10 + round(received / total_bytes * 80)),
+                                "Downloading Big-LaMa weights",
+                            )
+                if digest.hexdigest() != LAMA_WEIGHTS_SHA256:
+                    raise RuntimeError("Big-LaMa weight checksum mismatch")
+                partial.replace(weights)
+            except Exception:
+                partial.unlink(missing_ok=True)
+                raise
+        elif model_id == "hy-mt2":
             self._require("modelscope")
             from modelscope import snapshot_download
 

@@ -1,5 +1,6 @@
 import io
 
+import cv2
 import numpy as np
 from PIL import Image, ImageDraw
 
@@ -12,8 +13,8 @@ class BoundedTestRenderer(ArtworkPreservingRenderer):
     def __init__(self):
         self.font_path = None
 
-    def _draw(self, image, text, box, mean, white_ratio):
-        del text, mean, white_ratio
+    def _draw(self, image, text, box, style):
+        del text, style
         x0, y0, x1, y1 = box
         ImageDraw.Draw(image).rectangle((x0 + 8, y0 + 8, x1 - 8, y1 - 8), fill="black")
 
@@ -122,3 +123,80 @@ def test_managed_font_download_is_validated_and_atomic(monkeypatch, tmp_path):
     assert font.exists()
     assert font.read_bytes()[:4] == b"OTTO"
     assert not font.with_suffix(".otf.part").exists()
+
+
+def test_display_style_is_detected_without_title_specific_hint():
+    height, width = 1400, 600
+    gradient = np.linspace(170, 245, height, dtype=np.uint8)[:, None]
+    image = np.repeat(gradient, width, axis=1)
+    rgb = np.repeat(image[:, :, None], 3, axis=2)
+    # Synthetic thick black glyph cores with white outline on textured artwork.
+    for y in (180, 420, 660, 900):
+        cv2.rectangle(rgb, (205, y), (395, y + 150), (255, 255, 255), 28)
+        cv2.rectangle(rgb, (225, y + 20), (375, y + 130), (0, 0, 0), -1)
+    unit = TextUnit(
+        "title",
+        [50, 80, 550, 1280],
+        [50, 80, 550, 1280],
+        "日本語題名",
+        1.0,
+        False,
+        "中文标题",
+    )
+    style = ArtworkPreservingRenderer._analyze_style(rgb, unit)
+    assert style.display is True
+    assert style.outlined is True
+    assert style.bold is True
+    assert style.stroke_fill == "white"
+    assert style.font_size > 92
+
+
+def test_uniform_white_dialogue_uses_bold_without_fake_outline():
+    rgb = np.full((400, 300, 3), 255, dtype=np.uint8)
+    rgb[80:320, 120:180] = 0
+    unit = TextUnit(
+        "dialogue", [40, 30, 260, 370], [40, 30, 260, 370], "日本語", 1.0, False, "对白"
+    )
+    style = ArtworkPreservingRenderer._analyze_style(rgb, unit)
+    assert style.bold is True
+    assert style.outlined is False
+    assert style.stroke_ratio == 0
+
+
+def test_quality_plain_balloon_cleans_furigana_outside_main_bbox(tmp_path):
+    class EraseOnlyQuality(ArtworkPreservingRenderer):
+        def __init__(self):
+            self.font_path = None
+            self.cleanup_profile = "quality"
+
+        def _draw(self, *_args, **_kwargs):
+            return None
+
+    source = tmp_path / "furigana.png"
+    image = Image.new("RGB", (220, 180), "white")
+    draw = ImageDraw.Draw(image)
+    draw.rectangle((75, 55, 125, 125), fill="black")
+    # Small annotation lies outside bbox but inside the reviewed crop.
+    draw.rectangle((148, 65, 158, 95), fill="black")
+    image.save(source)
+    page = PageOCR(
+        1,
+        source.name,
+        220,
+        180,
+        [
+            TextUnit(
+                "dialogue",
+                [60, 40, 140, 140],
+                [40, 30, 175, 150],
+                "日本語",
+                1.0,
+                False,
+                "对白",
+            )
+        ],
+    )
+    output = tmp_path / "furigana-output.png"
+    EraseOnlyQuality().render_page(source, page, output)
+    rendered = np.asarray(Image.open(output).convert("RGB"))
+    assert np.all(rendered[65:96, 148:159] == 255)
