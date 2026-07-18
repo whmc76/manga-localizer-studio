@@ -37,6 +37,7 @@ if ($Profile -eq "cuda129") {
 
 $ProjectExtra = if ($Dev) { ".[ml,test]" } else { ".[ml]" }
 & $PythonPath -m pip install -e $ProjectExtra
+& $PythonPath -m manga_localizer.cli assets download
 if (-not $SkipModels) {
     & $PythonPath -m manga_localizer.cli models download all
 }

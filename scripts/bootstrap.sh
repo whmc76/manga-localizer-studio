@@ -39,6 +39,7 @@ fi
 
 if [[ "$DEV" == 1 ]]; then EXTRA='.[ml,test]'; else EXTRA='.[ml]'; fi
 "$PYTHON" -m pip install -e "$EXTRA"
+"$PYTHON" -m manga_localizer.cli assets download
 if [[ "$SKIP_MODELS" == 0 ]]; then
   "$PYTHON" -m manga_localizer.cli models download all
 fi

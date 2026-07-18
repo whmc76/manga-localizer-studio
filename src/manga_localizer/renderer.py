@@ -4,31 +4,69 @@ import json
 import math
 import os
 from pathlib import Path
+from urllib.request import Request, urlopen
 
 import cv2
 import numpy as np
 from PIL import Image, ImageDraw, ImageFont
 
+from .config import AppPaths
 from .ocr import PageOCR
 
 
-FONT_CANDIDATES = (
-    os.environ.get("MLS_FONT"),
+FONT_URL = (
+    "https://raw.githubusercontent.com/notofonts/noto-cjk/Sans2.004/"
+    "Sans/OTF/SimplifiedChinese/NotoSansCJKsc-Regular.otf"
+)
+SYSTEM_FONT_CANDIDATES = (
     "C:/Windows/Fonts/SourceHanSansCN-Medium.otf",
     "C:/Windows/Fonts/NotoSansSC-VF.ttf",
+    "C:/Windows/Fonts/msyh.ttc",
     "/usr/share/fonts/opentype/noto/NotoSansCJK-Regular.ttc",
     "/usr/share/fonts/truetype/noto/NotoSansCJK-Regular.ttc",
     "/System/Library/Fonts/PingFang.ttc",
 )
 
 
-def find_font() -> Path:
-    for candidate in FONT_CANDIDATES:
+def managed_font_path(paths: AppPaths | None = None) -> Path:
+    root = (paths or AppPaths.from_env()).root
+    return root / "fonts" / "NotoSansCJKsc-Regular.otf"
+
+
+def find_font(paths: AppPaths | None = None) -> Path:
+    candidates = (os.environ.get("MLS_FONT"), managed_font_path(paths), *SYSTEM_FONT_CANDIDATES)
+    for candidate in candidates:
         if candidate and Path(candidate).exists():
             return Path(candidate)
     raise FileNotFoundError(
         "No CJK font found. Set MLS_FONT to a Simplified Chinese TTF/OTF/TTC file."
     )
+
+
+def ensure_font(paths: AppPaths | None = None, force_managed: bool = False) -> Path:
+    """Return a CJK font, downloading a pinned OFL font when none is available."""
+    target = managed_font_path(paths)
+    if target.exists():
+        return target
+    if not force_managed:
+        try:
+            return find_font(paths)
+        except FileNotFoundError:
+            pass
+    target.parent.mkdir(parents=True, exist_ok=True)
+    partial = target.with_suffix(".otf.part")
+    request = Request(FONT_URL, headers={"User-Agent": "Manga-Localizer-Studio/0.1"})
+    try:
+        with urlopen(request, timeout=120) as response, partial.open("wb") as handle:
+            while chunk := response.read(1024 * 1024):
+                handle.write(chunk)
+        if partial.stat().st_size < 1_000_000 or partial.read_bytes()[:4] != b"OTTO":
+            raise RuntimeError("Downloaded CJK font failed size/header validation")
+        partial.replace(target)
+    except Exception:
+        partial.unlink(missing_ok=True)
+        raise
+    return target
 
 
 def _font(path: Path, size: int) -> ImageFont.FreeTypeFont:
@@ -75,7 +113,7 @@ def _fit_horizontal(font_path: Path, draw, text: str, width: int, height: int):
 
 class ArtworkPreservingRenderer:
     def __init__(self, font_path: Path | None = None):
-        self.font_path = font_path or find_font()
+        self.font_path = font_path or ensure_font()
 
     @staticmethod
     def _erase(rgb: np.ndarray, box: list[int]) -> tuple[np.ndarray, float, float]:

@@ -11,6 +11,7 @@
 - **本地隐私**：模型和任务数据保存在本机，服务默认只监听 `127.0.0.1`。
 - **ModelScope 优先**：Hy-MT2 与 PaddleX 权重优先从魔搭社区获取；Manga OCR 暂无等价镜像，明确回退到上游模型源。
 - **开箱即用**：首次启动创建隔离 `.venv`、按硬件安装 CPU/NVIDIA 依赖并下载权重。
+- **字体自带方案**：安装器预取固定版本的 Noto Sans CJK SC；缺失时渲染器也会自动补齐。
 - **UI + CLI**：浏览器工作台适合日常使用，CLI 适合批量和自动化。
 
 ## 三步开始
@@ -79,7 +80,7 @@ flowchart LR
 | 连贯翻译 | Hy-MT2 1.8B | ModelScope 快照下载 |
 | 画面修复 | OpenCV 局部掩膜 + Pillow 排字 | 无远程服务 |
 
-缓存默认位于 `~/.manga-localizer-studio/models`，可通过 `MLS_HOME` 改变。中文字体可通过 `MLS_FONT` 指向 TTF/OTF/TTC 文件。
+缓存默认位于 `~/.manga-localizer-studio`，可通过 `MLS_HOME` 改变。自动字体保存在 `fonts/`，模型保存在 `models/`；也可通过 `MLS_FONT` 指向自己的 TTF/OTF/TTC 文件。
 
 ## 设计与工程约束
 

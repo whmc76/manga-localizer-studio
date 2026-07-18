@@ -8,6 +8,7 @@ not bundled and remain governed by their upstream licenses.
 | PP-OCRv5 | Text-region detection | ModelScope through PaddleX | Apache-2.0 |
 | Manga OCR | Japanese manga OCR | `kha-white/manga-ocr-base` (fallback) | Apache-2.0 |
 | Hy-MT2 1.8B | Context-aware translation | `Tencent-Hunyuan/Hy-MT2-1.8B` on ModelScope | Apache-2.0 |
+| Noto Sans CJK SC | Simplified Chinese typesetting | pinned `notofonts/noto-cjk` release | SIL OFL-1.1 |
 
 Review the license files delivered with each downloaded model before commercial
 deployment. The application records repository and provider metadata in each

@@ -4,11 +4,12 @@ Date: 2026-07-18
 
 ## Automated checks
 
-- 11 unit/API/contract tests passed on Windows with Python 3.12.
+- 13 unit/API/contract tests passed on Windows with Python 3.12.
 - Source distribution and wheel built successfully.
 - Python source compiled with `compileall`.
 - PowerShell bootstrap parsed without errors; Git Bash accepted both shell scripts.
 - The renderer regression test confirms every pixel outside the OCR box is unchanged.
+- Managed-font download is header/size validated and atomically installed.
 
 ## Browser checks
 

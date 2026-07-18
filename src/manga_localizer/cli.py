@@ -13,11 +13,14 @@ from .api import create_app
 from .config import AppPaths, UserSettings
 from .model_manager import MODEL_REGISTRY, ModelManager
 from .pipeline import LocalizerPipeline, PipelineRequest
+from .renderer import ensure_font, find_font
 
 
 app = typer.Typer(help="Local-first manga localization workspace.", no_args_is_help=True)
 models_app = typer.Typer(help="Inspect and download OCR/translation models.")
+assets_app = typer.Typer(help="Inspect and download non-model runtime assets.")
 app.add_typer(models_app, name="models")
+app.add_typer(assets_app, name="assets")
 
 
 @app.command()
@@ -90,16 +93,28 @@ def model_download(model_id: str = typer.Argument("all")):
         manager.download(model_id, progress)
 
 
+@assets_app.command("download")
+def asset_download():
+    """Download the pinned Simplified Chinese font into the app data folder."""
+    path = ensure_font(AppPaths.from_env().ensure(), force_managed=True)
+    typer.echo(f"CJK font ready: {path}")
+
+
 @app.command()
 def doctor():
     """Print environment and cache diagnostics."""
     paths = AppPaths.from_env().ensure()
     settings = UserSettings.load(paths.settings)
+    try:
+        font = str(find_font(paths))
+    except FileNotFoundError:
+        font = "missing; run manga-localizer assets download"
     payload = {
         "version": __version__,
         "home": str(paths.root),
         "settings": settings.__dict__,
         "models": ModelManager(paths).status(),
+        "font": font,
     }
     typer.echo(json.dumps(payload, ensure_ascii=False, indent=2))
 
