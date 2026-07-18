@@ -1,5 +1,9 @@
 # Changelog
 
+## 0.4.2 - 2026-07-18
+
+- Allow the Torchvision 0.23 build paired with Torch 2.8 on PyTorch's CUDA 12.9 Windows index, keeping the hardware-aware overlay consistent with project metadata.
+
 ## 0.4.1 - 2026-07-18
 
 - Keep source previews stable during job polling and request translated previews only after the selected page has actually rendered, eliminating expected 404 request spam.

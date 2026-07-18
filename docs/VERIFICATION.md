@@ -5,7 +5,8 @@ Date: 2026-07-18
 ## Automated checks
 
 - 49 unit/API/contract tests passed on Windows with Python 3.12.
-- `uv sync --locked --extra ml --extra test --dry-run` resolved the complete 0.4.1 environment, including a Torch-compatible Torchvision build.
+- `uv sync --locked --extra ml --extra test --dry-run` resolved the complete 0.4.2 environment, including a Torch-compatible Torchvision build.
+- A CUDA 12.9 overlay dry-run resolved the official Windows/Python 3.12 pair Torch 2.8 + Torchvision 0.23 without violating project metadata.
 - Renderer regressions cover native-resolution LaMa boundaries, exact unmasked-pixel restoration, source-driven outlined display text, bold balloon text, furigana outside the main OCR box, and lossless output.
 - OCR regressions cover ordinary Paddle regions, local Ollama vision calls, and conservative light-on-dark title discovery without page, coordinate, filename, or phrase rules.
 - Model regressions cover checksum validation, atomic Big-LaMa installation, backend-dependent requirements, and the four-model UI contract.
