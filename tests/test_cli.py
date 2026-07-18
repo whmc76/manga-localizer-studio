@@ -1,11 +1,26 @@
 import logging
+import io
+import json
 
 from manga_localizer.cli import (
     _font_status,
     configure_cli_encoding,
     configure_dependency_logging,
+    existing_ui_url,
     torch_pair_compatible,
 )
+
+
+def test_existing_local_workspace_is_reused(monkeypatch):
+    payload = io.BytesIO(json.dumps({"version": "0.4.5", "local_only": True}).encode())
+    monkeypatch.setattr("manga_localizer.cli.urlopen", lambda *_args, **_kwargs: payload)
+    assert existing_ui_url("127.0.0.1", 8765) == "http://127.0.0.1:8765"
+
+
+def test_unrelated_service_is_not_treated_as_the_workspace(monkeypatch):
+    payload = io.BytesIO(json.dumps({"service": "something-else"}).encode())
+    monkeypatch.setattr("manga_localizer.cli.urlopen", lambda *_args, **_kwargs: payload)
+    assert existing_ui_url("127.0.0.1", 8765) == ""
 
 
 class ReconfigurableStream:

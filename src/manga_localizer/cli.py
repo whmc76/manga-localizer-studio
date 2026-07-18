@@ -8,6 +8,8 @@ import threading
 import time
 import webbrowser
 from pathlib import Path
+from urllib.error import HTTPError, URLError
+from urllib.request import urlopen
 
 import typer
 
@@ -45,6 +47,17 @@ app.add_typer(models_app, name="models")
 app.add_typer(assets_app, name="assets")
 
 
+def existing_ui_url(host: str, port: int, timeout: float = 30.0) -> str:
+    """Return the local workspace URL when this app already owns the port."""
+    url = f"http://{host}:{port}"
+    try:
+        with urlopen(f"{url}/api/system", timeout=timeout) as response:
+            payload = json.load(response)
+    except (HTTPError, URLError, TimeoutError, json.JSONDecodeError, OSError):
+        return ""
+    return url if payload.get("local_only") is True and payload.get("version") else ""
+
+
 @app.command()
 def ui(
     host: str = typer.Option("127.0.0.1", help="Bind host. Keep localhost for privacy."),
@@ -52,6 +65,13 @@ def ui(
     open_browser: bool = typer.Option(True, "--open/--no-open"),
 ):
     """Start the local web workspace."""
+    running_url = existing_ui_url(host, port)
+    if running_url:
+        typer.echo(f"Manga Localizer Studio is already running at {running_url}")
+        if open_browser:
+            webbrowser.open(running_url)
+        return
+
     import uvicorn
 
     if open_browser:
