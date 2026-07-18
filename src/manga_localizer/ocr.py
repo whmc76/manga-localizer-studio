@@ -4,6 +4,7 @@ import base64
 import json
 import re
 import warnings
+from contextlib import contextmanager
 from dataclasses import asdict, dataclass, field
 from pathlib import Path
 from urllib.request import Request, urlopen
@@ -26,6 +27,18 @@ JP_RE = re.compile(r"[\u3040-\u30ff\u3400-\u9fff]")
 KATAKANA_RE = re.compile(r"^[\u30a0-\u30ffー・…ッっ♡♥！？!?.．]+$")
 EXPLICIT_SKIP_REASONS = frozenset({"duplicate", "noise", "decorative", "preserve"})
 UNRESOLVED_SKIP_REASON = "unresolved"
+
+
+@contextmanager
+def _suppress_optional_ccache_warning():
+    """Hide Paddle's compile-cache notice without hiding inference warnings."""
+    with warnings.catch_warnings():
+        warnings.filterwarnings(
+            "ignore",
+            message=r"No ccache found\..*",
+            category=UserWarning,
+        )
+        yield
 
 
 def natural_key(path: Path) -> list[int | str]:
@@ -231,13 +244,7 @@ class PaddleMangaOCR:
             # Paddle imports its C++ extension helper even for ordinary inference.
             # ccache is only useful when compiling custom extensions, so do not
             # present its absence as a broken runtime component to desktop users.
-            with warnings.catch_warnings():
-                warnings.filterwarnings(
-                    "ignore",
-                    message=r"No ccache found\..*",
-                    category=UserWarning,
-                    module=r"paddle\.utils\.cpp_extension\.extension_utils",
-                )
+            with _suppress_optional_ccache_warning():
                 from paddleocr import PaddleOCR, TextDetection
         except ImportError as exc:
             raise ModelDependencyError(
@@ -248,23 +255,24 @@ class PaddleMangaOCR:
         if profile not in {"quality", "fast"}:
             raise ValueError(f"Unknown OCR profile: {profile}")
         self.profile = profile
-        if profile == "quality":
-            self.detector = PaddleOCR(
-                text_detection_model_name="PP-OCRv5_mobile_det",
-                text_recognition_model_name="PP-OCRv5_server_rec",
-                use_doc_orientation_classify=False,
-                use_doc_unwarping=False,
-                use_textline_orientation=True,
-                device=resolved_device,
-                text_recognition_batch_size=32,
-                enable_mkldnn=False,
-            )
-        else:
-            self.detector = TextDetection(
-                model_name="PP-OCRv5_mobile_det",
-                device=resolved_device,
-                enable_mkldnn=False,
-            )
+        with _suppress_optional_ccache_warning():
+            if profile == "quality":
+                self.detector = PaddleOCR(
+                    text_detection_model_name="PP-OCRv5_mobile_det",
+                    text_recognition_model_name="PP-OCRv5_server_rec",
+                    use_doc_orientation_classify=False,
+                    use_doc_unwarping=False,
+                    use_textline_orientation=True,
+                    device=resolved_device,
+                    text_recognition_batch_size=32,
+                    enable_mkldnn=False,
+                )
+            else:
+                self.detector = TextDetection(
+                    model_name="PP-OCRv5_mobile_det",
+                    device=resolved_device,
+                    enable_mkldnn=False,
+                )
         try:
             import torch
 

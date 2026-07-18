@@ -1,5 +1,10 @@
 # Changelog
 
+## 0.4.4 - 2026-07-19
+
+- Suppress Paddle's optional ccache notice across the actual model-construction boundary while preserving all actionable inference warnings.
+- Keep Hugging Face optional-file HTTP probes out of the user console by raising only the third-party HTTP client log threshold; download failures still surface as exceptions.
+
 ## 0.4.3 - 2026-07-19
 
 - Pin the verified Torch 2.8.0 and Torchvision 0.23.0 pair for CPU and CUDA 12.9 instead of relying on ambiguous index metadata.
