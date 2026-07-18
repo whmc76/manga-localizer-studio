@@ -4,20 +4,20 @@ Date: 2026-07-18
 
 ## Automated checks
 
-- 30 unit/API/contract tests passed on Windows with Python 3.12.
+- 33 unit/API/contract tests passed on Windows with Python 3.12.
 - Source distribution and wheel built successfully.
 - Python source compiled with `compileall`.
 - PowerShell bootstrap parsed without errors; Git Bash accepted both shell scripts.
-- Renderer regressions confirm pixels outside the bounded cleanup area remain unchanged and edge-connected panel art survives grouped-text cleanup.
+- Renderer regressions cover both complete quality cleanup and conservative artwork cleanup inside bounded text regions.
 - Managed-font download is header/size validated and atomically installed.
 
 ## Full-book acceptance test
 
-- Ran the built-in backend end to end on a 125-page, 2126×3661 source book (final page 2800×3808).
+- Imported the reviewed transcript and rerendered a 125-page, 2126×3661 source book (final page 2800×3808) through the v0.3 pipeline.
 - Produced 125 PNG files and a 125-page transcript; every output dimension matched its source.
-- Detected 898 text units: 741 translated units, 157 preserved sound-effect units, and zero missing non-SFX translations.
-- Quality-gate audit found zero remaining kana-bearing or context-leaking translations after bounded retry.
-- Pixel comparison on pages 1, 3, 25, 50, 75, 100, and 125 found zero changed pixels outside the declared cleanup/typesetting regions.
+- Rendered 811 reviewed Chinese units; 231 explicitly reviewed fragments/effects remained skipped or preserved.
+- Full pixel comparison across all 125 pages found zero changed pixels outside declared cleanup/typesetting regions.
+- A fresh default quality-OCR smoke test detected 15 grouped units on page 3, compared with 6 in the regressed detection-only run.
 
 ## Browser checks
 

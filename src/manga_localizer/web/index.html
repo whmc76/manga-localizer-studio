@@ -37,6 +37,7 @@
               <label><span>输出目录</span><div class="path-field"><i>▱</i><input id="outputPath" autocomplete="off" placeholder="不会覆盖源图片"><button id="outputPicker">选择文件夹</button></div></label>
               <label><span>目标语言</span><select id="targetLanguage"><option>简体中文</option><option>繁体中文</option><option>English</option></select></label>
             </div>
+            <details class="review-import"><summary>高级：导入已审校 transcript.json</summary><input id="reviewedTranscript" autocomplete="off" placeholder="可选；导入后跳过 OCR 和翻译，直接安全重排" oninput="updateStartState()"></details>
           </section>
 
           <section class="panel pipeline-panel" data-testid="pipeline">
@@ -71,6 +72,7 @@
 
               <section class="panel settings-panel" data-testid="translation-settings">
                 <div class="section-title"><span>翻译设置</span></div>
+                <label class="context-row"><span>处理质量</span><select id="qualityProfile"><option value="quality">质量优先（推荐）</option><option value="fast">快速预览</option></select></label>
                 <label class="context-row"><span>推理后端</span><select id="inferenceBackend"><option value="builtin">内置 Hy-MT2</option><option value="ollama">本机 Ollama</option><option value="online">在线兼容 API</option></select></label>
                 <label class="toggle-row"><span><b>故事连贯模式</b><small>参考相邻页面调整人名和语气</small></span><input id="storyContext" type="checkbox"><i></i></label>
                 <label class="context-row"><span>上下文页数</span><div class="counter"><button id="contextMinus" type="button">−</button><output id="contextPages">3</output><button id="contextPlus" type="button">＋</button></div></label>

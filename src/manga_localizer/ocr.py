@@ -1,6 +1,5 @@
 from __future__ import annotations
 
-import math
 import re
 from dataclasses import asdict, dataclass, field
 from pathlib import Path
@@ -43,6 +42,7 @@ class TextUnit:
     score: float
     is_sfx: bool = False
     zh: str = ""
+    skip: bool = False
     # Keep the detector's tight line boxes. ``bbox`` is the union used for
     # translation layout, while these boxes constrain destructive cleanup to
     # the pixels that actually contained source text.
@@ -131,27 +131,45 @@ def _union_box(items: list[dict]) -> list[int]:
 
 
 class PaddleMangaOCR:
-    """Paddle text detection followed by manga-specific Japanese recognition."""
+    """Paddle text localization followed by manga-specific Japanese recognition.
 
-    def __init__(self, paths: AppPaths, device: str = "auto"):
+    ``quality`` uses Paddle's recognition boxes as a second signal.  MangaOCR
+    remains the Japanese source of truth, but the recognizer filters detector
+    noise and produces line boxes that group substantially better on manga.
+    ``fast`` keeps the detection-only path for previews and low-end machines.
+    """
+
+    def __init__(self, paths: AppPaths, device: str = "auto", profile: str = "quality"):
         configure_model_caches(paths)
         try:
             from manga_ocr import MangaOcr
-            from paddleocr import TextDetection
+            from paddleocr import PaddleOCR, TextDetection
         except ImportError as exc:
             raise ModelDependencyError(
                 "OCR dependencies are missing. Run scripts/bootstrap with an ML profile."
             ) from exc
 
         resolved_device = self._resolve_device(device)
-        # MangaOCR is already the recognition source of truth. Running the
-        # complete PaddleOCR pipeline repeated recognition on CPU and more than
-        # doubled batch time, so keep Paddle limited to detection.
-        self.detector = TextDetection(
-            model_name="PP-OCRv5_mobile_det",
-            device=resolved_device,
-            enable_mkldnn=False,
-        )
+        if profile not in {"quality", "fast"}:
+            raise ValueError(f"Unknown OCR profile: {profile}")
+        self.profile = profile
+        if profile == "quality":
+            self.detector = PaddleOCR(
+                text_detection_model_name="PP-OCRv5_mobile_det",
+                text_recognition_model_name="PP-OCRv5_server_rec",
+                use_doc_orientation_classify=False,
+                use_doc_unwarping=False,
+                use_textline_orientation=True,
+                device=resolved_device,
+                text_recognition_batch_size=32,
+                enable_mkldnn=False,
+            )
+        else:
+            self.detector = TextDetection(
+                model_name="PP-OCRv5_mobile_det",
+                device=resolved_device,
+                enable_mkldnn=False,
+            )
         try:
             import torch
 
@@ -192,17 +210,11 @@ class PaddleMangaOCR:
                 if _area(box) < 650:
                     continue
                 score = float(scores[index]) if index < len(scores) else 0.0
-                top_dx = float(polygon[1][0]) - float(polygon[0][0])
-                top_dy = float(polygon[1][1]) - float(polygon[0][1])
-                angle = math.degrees(math.atan2(top_dy, top_dx))
                 selected.append(
                     {
                         "box": box,
                         "text": "",
                         "score": score,
-                        # Strongly rotated manga lettering is normally an
-                        # effect rather than dialogue. Preserve it by default.
-                        "sfx_hint": abs(angle) > 7.0,
                     }
                 )
             return selected
@@ -216,9 +228,18 @@ class PaddleMangaOCR:
                 continue
             text = str(texts[index]).strip() if index < len(texts) else ""
             score = float(scores[index]) if index < len(scores) else 0.0
-            # Keep large detector boxes even when Paddle recognition fails. MangaOCR
-            # is the source of truth for Japanese text inside the detected crop.
-            if not text and _area(box) < 4_500:
+            has_japanese = bool(JP_RE.search(text))
+            kana_count = len(re.findall(r"[\u3040-\u30ff]", text))
+            large_detector_box = _area(box) >= 5_000
+            confident_effect = score >= 0.72 and _area(box) >= 1_200 and bool(text)
+            if not (has_japanese or large_detector_box or confident_effect):
+                continue
+            if (
+                has_japanese
+                and score < 0.58
+                and not (score >= 0.42 and kana_count >= 2)
+                and not large_detector_box
+            ):
                 continue
             selected.append({"box": box, "text": text, "score": score})
         return selected
@@ -254,7 +275,6 @@ class PaddleMangaOCR:
                     score=round(score, 4),
                     is_sfx=(
                         (bool(KATAKANA_RE.fullmatch(clean)) and len(clean) <= 14)
-                        or (len(group) == 1 and group[0].get("sfx_hint", False))
                     ),
                     erase_boxes=[item["box"] for item in group],
                 )

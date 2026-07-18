@@ -5,6 +5,8 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Callable
 
+from PIL import Image
+
 from .config import AppPaths, UserSettings
 from .ocr import PageOCR, PaddleMangaOCR, TextUnit, list_images
 from .renderer import ArtworkPreservingRenderer
@@ -21,7 +23,8 @@ class PipelineRequest:
     target_language: str = "简体中文"
     story_context: bool = True
     context_pages: int = 3
-    preserve_sfx: bool = True
+    preserve_sfx: bool = False
+    quality_profile: str = "quality"
     device: str = "auto"
     glossary: dict[str, str] | None = None
     inference_backend: str = "builtin"
@@ -30,6 +33,7 @@ class PipelineRequest:
     online_base_url: str = "https://api.openai.com/v1"
     online_model: str = ""
     online_api_key: str = ""
+    reviewed_transcript: Path | None = None
 
 
 class LocalizerPipeline:
@@ -53,20 +57,32 @@ class LocalizerPipeline:
         work = output / ".manga-localizer-work"
         work.mkdir(parents=True, exist_ok=True)
 
-        ocr = PaddleMangaOCR(self.paths, request.device)
         pages: list[PageOCR] = []
         total = len(files)
-        for index, image_path in enumerate(files, start=1):
-            self._emit(emit, "ocr", index - 1, total, f"识别 {image_path.name}")
-            page = ocr.analyze(image_path, index)
-            pages.append(page)
-            (work / f"{image_path.stem}.ocr.json").write_text(
-                json.dumps(page.to_dict(), ensure_ascii=False, indent=2), encoding="utf-8"
-            )
-            self._emit(emit, "ocr", index, total, f"已识别 {image_path.name}")
+        if request.reviewed_transcript:
+            transcript_path = request.reviewed_transcript.expanduser().resolve()
+            payload = json.loads(transcript_path.read_text(encoding="utf-8"))
+            pages = [page_from_dict(item) for item in payload["pages"]]
+            self._validate_reviewed_pages(files, pages)
+            self._emit(emit, "ocr", total, total, f"已导入审校稿 {transcript_path.name}")
+        else:
+            ocr = PaddleMangaOCR(self.paths, request.device, request.quality_profile)
+            for index, image_path in enumerate(files, start=1):
+                self._emit(emit, "ocr", index - 1, total, f"识别 {image_path.name}")
+                page = ocr.analyze(image_path, index)
+                pages.append(page)
+                (work / f"{image_path.stem}.ocr.json").write_text(
+                    json.dumps(page.to_dict(), ensure_ascii=False, indent=2), encoding="utf-8"
+                )
+                self._emit(emit, "ocr", index, total, f"已识别 {image_path.name}")
 
-        self._emit(emit, "translate", 0, total, "加载翻译后端")
-        if request.inference_backend == "builtin":
+        needs_translation = any(
+            not unit.skip and not unit.zh for page in pages for unit in page.units
+        )
+        self._emit(emit, "translate", 0, total, "加载翻译后端" if needs_translation else "审校稿已包含译文")
+        if not needs_translation:
+            translator = None
+        elif request.inference_backend == "builtin":
             translator = HyMTTranslator(
                 self.paths.models / "hy-mt2", request.target_language, request.device
             )
@@ -87,23 +103,24 @@ class LocalizerPipeline:
             )
         else:
             raise ValueError(f"Unknown inference backend: {request.inference_backend}")
-        translator.translate_pages(
-            pages,
-            context_pages=max(0, min(12, request.context_pages)),
-            story_context=request.story_context,
-            preserve_sfx=request.preserve_sfx,
-            glossary=request.glossary,
-            progress=lambda current, count: self._emit(
-                emit, "translate", current, count, f"已翻译 {current}/{count} 页"
-            ),
-        )
+        if translator is not None:
+            translator.translate_pages(
+                pages,
+                context_pages=max(0, min(12, request.context_pages)),
+                story_context=request.story_context,
+                preserve_sfx=request.preserve_sfx,
+                glossary=request.glossary,
+                progress=lambda current, count: self._emit(
+                    emit, "translate", current, count, f"已翻译 {current}/{count} 页"
+                ),
+            )
         self._emit(emit, "translate", total, total, "连贯翻译完成")
         transcript = {"source": str(source), "pages": [page.to_dict() for page in pages]}
         (work / "transcript.json").write_text(
             json.dumps(transcript, ensure_ascii=False, indent=2), encoding="utf-8"
         )
 
-        renderer = ArtworkPreservingRenderer()
+        renderer = ArtworkPreservingRenderer(cleanup_profile=request.quality_profile)
         manifest = []
         for index, page in enumerate(pages, start=1):
             self._emit(emit, "render", index - 1, total, f"替换第 {index} 页文字")
@@ -127,6 +144,23 @@ class LocalizerPipeline:
         self._emit(emit, "complete", total, total, "本地化完成")
         return result
 
+    @staticmethod
+    def _validate_reviewed_pages(files: list[Path], pages: list[PageOCR]) -> None:
+        if len(files) != len(pages):
+            raise ValueError(
+                f"Reviewed transcript has {len(pages)} pages, source folder has {len(files)}"
+            )
+        for index, (source, page) in enumerate(zip(files, pages), start=1):
+            if source.name != page.file:
+                raise ValueError(
+                    f"Reviewed transcript page {index} expects {page.file}, got {source.name}"
+                )
+            with Image.open(source) as image:
+                if image.size != (page.width, page.height):
+                    raise ValueError(
+                        f"Reviewed transcript page {index} dimensions do not match source"
+                    )
+
 
 def request_from_settings(source: Path, output: Path, settings: UserSettings) -> PipelineRequest:
     return PipelineRequest(
@@ -136,6 +170,7 @@ def request_from_settings(source: Path, output: Path, settings: UserSettings) ->
         story_context=settings.story_context,
         context_pages=settings.context_pages,
         preserve_sfx=settings.preserve_sfx,
+        quality_profile=settings.quality_profile,
         device=settings.device,
         inference_backend=settings.inference_backend,
         ollama_base_url=settings.ollama_base_url,
@@ -151,5 +186,18 @@ def page_from_dict(payload: dict) -> PageOCR:
         file=payload["file"],
         width=payload["width"],
         height=payload["height"],
-        units=[TextUnit(**unit) for unit in payload["units"]],
+        units=[
+            TextUnit(
+                id=unit["id"],
+                bbox=unit["bbox"],
+                crop_bbox=unit.get("crop_bbox", unit["bbox"]),
+                ja=unit.get("ja", ""),
+                score=float(unit.get("score", max(unit.get("paddle_scores") or [0.0]))),
+                is_sfx=bool(unit.get("is_sfx", False)),
+                zh=unit.get("zh", ""),
+                skip=bool(unit.get("skip", False)),
+                erase_boxes=unit.get("erase_boxes", []),
+            )
+            for unit in payload["units"]
+        ],
     )

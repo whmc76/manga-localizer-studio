@@ -1,5 +1,15 @@
 # Changelog
 
+## 0.3.0 - 2026-07-18
+
+- Restore full PaddleOCR line-level recognition as the default quality profile; retain detection-only OCR as an explicit fast preview.
+- Stop treating rotated text regions as sound effects, which previously caused skipped dialogue.
+- Relax the translation length gate so natural Chinese and omitted Japanese subjects are not fragmented.
+- Translate sound effects by default while keeping preservation available as an option.
+- Add reviewed-transcript import for reproducible human-in-the-loop correction and rerendering.
+- Add complete text-region cleanup for quality mode while keeping conservative artwork cleanup in fast mode.
+- Add a full-book verifier for exact dimensions and zero pixel changes outside declared text regions.
+
 ## 0.2.0 - 2026-07-18
 
 - Add selectable built-in Hy-MT2, local Ollama, and online OpenAI-compatible translation backends.

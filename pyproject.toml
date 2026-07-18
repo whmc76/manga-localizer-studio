@@ -4,7 +4,7 @@ build-backend = "hatchling.build"
 
 [project]
 name = "manga-localizer-studio"
-version = "0.2.0"
+version = "0.3.0"
 description = "Local-first manga OCR, coherent translation, and artwork-preserving text replacement."
 readme = "README.md"
 requires-python = ">=3.11,<3.13"

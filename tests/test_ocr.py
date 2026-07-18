@@ -42,14 +42,13 @@ def test_detection_only_payload_becomes_tight_regions():
             "box": [10, 18, 72, 92],
             "text": "",
             "score": 0.91,
-            "sfx_hint": False,
         }
     ]
 
 
-def test_rotated_detection_is_preserved_as_sfx_hint():
+def test_rotation_alone_does_not_skip_dialogue_as_sfx():
     payload = {
         "dt_polys": [[[10, 20], [70, 5], [90, 75], [30, 90]]],
         "dt_scores": [0.8],
     }
-    assert PaddleMangaOCR._regions(payload)[0]["sfx_hint"] is True
+    assert "sfx_hint" not in PaddleMangaOCR._regions(payload)[0]

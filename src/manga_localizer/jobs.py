@@ -45,6 +45,10 @@ class JobStore:
                 "story_context": request.story_context,
                 "context_pages": request.context_pages,
                 "preserve_sfx": request.preserve_sfx,
+                "quality_profile": request.quality_profile,
+                "reviewed_transcript": (
+                    str(request.reviewed_transcript) if request.reviewed_transcript else None
+                ),
                 "device": request.device,
                 "inference_backend": request.inference_backend,
                 "ollama_base_url": request.ollama_base_url,

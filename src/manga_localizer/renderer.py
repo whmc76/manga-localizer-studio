@@ -112,8 +112,11 @@ def _fit_horizontal(font_path: Path, draw, text: str, width: int, height: int):
 
 
 class ArtworkPreservingRenderer:
-    def __init__(self, font_path: Path | None = None):
+    def __init__(self, font_path: Path | None = None, cleanup_profile: str = "artwork"):
         self.font_path = font_path or ensure_font()
+        if cleanup_profile not in {"artwork", "quality"}:
+            raise ValueError(f"Unknown cleanup profile: {cleanup_profile}")
+        self.cleanup_profile = cleanup_profile
 
     @staticmethod
     def _appearance(rgb: np.ndarray, box: list[int]) -> tuple[float, float]:
@@ -177,6 +180,43 @@ class ArtworkPreservingRenderer:
         rgb[y0:y1, x0:x1] = crop
         return rgb, mean, white_ratio
 
+    @staticmethod
+    def _erase_complete(rgb: np.ndarray, box: list[int]) -> tuple[np.ndarray, float, float]:
+        """Remove all text-colored pixels inside an OCR-confirmed rectangle.
+
+        This intentionally prefers complete source-text removal over conserving
+        pixels *inside* the detected text region. Changes remain bounded to that
+        region; surrounding artwork is never sampled, resized, or overwritten.
+        """
+        x0, y0, x1, y1 = box
+        crop = rgb[y0:y1, x0:x1].copy()
+        gray = cv2.cvtColor(crop, cv2.COLOR_RGB2GRAY)
+        mean = float(gray.mean()) if gray.size else 255.0
+        white_ratio = float((gray > 225).mean()) if gray.size else 1.0
+        if white_ratio > 0.58:
+            mask = cv2.dilate(
+                (gray < 150).astype(np.uint8) * 255,
+                np.ones((7, 7), np.uint8),
+                iterations=1,
+            )
+            crop[mask > 0] = 255
+        elif mean < 145:
+            mask = cv2.dilate(
+                ((gray > 210) | (gray < 35)).astype(np.uint8) * 255,
+                np.ones((13, 13), np.uint8),
+                iterations=1,
+            )
+            crop = cv2.inpaint(crop, mask, 7, cv2.INPAINT_TELEA)
+        else:
+            mask = cv2.dilate(
+                (gray < 75).astype(np.uint8) * 255,
+                np.ones((31, 31), np.uint8),
+                iterations=1,
+            )
+            crop = cv2.inpaint(crop, mask, 7, cv2.INPAINT_TELEA)
+        rgb[y0:y1, x0:x1] = crop
+        return rgb, mean, white_ratio
+
     def _draw(self, image: Image.Image, text: str, box: list[int], mean: float, white_ratio: float):
         draw = ImageDraw.Draw(image)
         x0, y0, x1, y1 = box
@@ -237,7 +277,7 @@ class ArtworkPreservingRenderer:
         stats: dict[str, tuple[float, float]] = {}
         active = []
         for unit in page.units:
-            if not unit.zh or (preserve_sfx and unit.is_sfx):
+            if unit.skip or not unit.zh or (preserve_sfx and unit.is_sfx):
                 continue
             x0, y0, x1, y1 = unit.bbox
             unit.bbox = [
@@ -266,7 +306,12 @@ class ArtworkPreservingRenderer:
                     max(0, min(page.height, ey1 + pad_y)),
                 ]
                 if bounded[2] > bounded[0] and bounded[3] > bounded[1]:
-                    rgb, _, _ = self._erase(rgb, bounded)
+                    erase = (
+                        self._erase_complete
+                        if getattr(self, "cleanup_profile", "artwork") == "quality"
+                        else self._erase
+                    )
+                    rgb, _, _ = erase(rgb, bounded)
             stats[unit.id] = (mean, white_ratio)
         rendered = Image.fromarray(rgb)
         for unit in active:

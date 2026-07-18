@@ -6,8 +6,10 @@
 
 ## 特性
 
-- **故事连贯**：按连续页分块翻译，并携带前文、固定译名和角色语气约束。
-- **保护画面**：用紧凑文字框和连通域遮罩只清除日文字形，输出保持原分辨率；源目录只读，结果写入新目录。
+- **故事连贯**：按连续 4 页分块翻译，并携带前文、固定译名和角色语气约束；自然中文不再被过严字数门槛截断。
+- **质量优先**：默认用 Paddle 行级识别框 + Manga OCR 双重信号；快速预览仍可选仅检测模式。
+- **保护画面**：质量模式在已确认文字框内彻底清除原文，快速模式保留边缘连通线稿；两者都保持原尺寸且不覆盖源图。
+- **可追踪审校**：可导入已审校 `transcript.json` 重排，并用内置脚本验证页数、尺寸和区域外像素变化。
 - **三种推理后端**：内置 Hy-MT2、本机 Ollama、在线 OpenAI 兼容 API 可随时切换。
 - **隐私边界清晰**：本地模式不外传数据；在线模式只发送 OCR 文本和上下文，不上传图片。
 - **ModelScope 优先**：Hy-MT2 与 PaddleX 权重优先从魔搭社区获取；Manga OCR 暂无等价镜像，明确回退到上游模型源。
@@ -62,6 +64,7 @@ CLI 与 UI 使用同一条流水线：
 ```bash
 manga-localizer run "D:/manga/chapter-01" -o "D:/manga/chapter-01_zh"
 manga-localizer run "D:/manga/chapter-01" -o "D:/manga/chapter-01_zh" --backend ollama --ollama-model qwen2.5:7b
+manga-localizer run "D:/manga/chapter-01" -o "D:/manga/chapter-01_final" --reviewed-transcript "D:/manga/transcript-reviewed.json"
 manga-localizer models status
 manga-localizer doctor
 ```
@@ -88,7 +91,7 @@ flowchart LR
 
 | 模块 | 默认方案 | 下载策略 |
 |---|---|---|
-| 文字定位 | PP-OCRv5 | PaddleX 强制 `modelscope` 源 |
+| 文字定位 | PP-OCRv5 mobile det + server rec | PaddleX 强制 `modelscope` 源 |
 | 日文识别 | Manga OCR | 上游源回退，并在 UI 标明 |
 | 连贯翻译 | Hy-MT2 / Ollama / 在线兼容 API | 后端可选；共用连续页提示词与漏行补译 |
 | 画面修复 | OpenCV 局部掩膜 + Pillow 排字 | 无远程服务 |
@@ -99,7 +102,7 @@ flowchart LR
 
 - 原始图片从不被覆盖；API 也拒绝相同的源/输出目录。
 - 像素变化限制在检测框周围的有界清理区；边缘连通的角色、背景和分镜线会被保留，回归测试覆盖该约束。
-- 翻译保留稳定单元 ID，模型漏行时逐条补译，避免气泡错位。
+- 翻译保留稳定单元 ID，模型漏行时逐条补译，避免气泡错位；旋转角度不再被当作跳过对白的依据。
 - 模型状态、进度、历史和预览均来自真实本地 API，不使用伪造 UI 状态。
 - 首版最适合印刷体日文漫画；复杂手写字、跨画面大字和纹理背景仍建议人工复核。
 
@@ -112,6 +115,7 @@ flowchart LR
 uv lock --check
 uv run --frozen --no-sync pytest
 uv run --frozen --no-sync manga-localizer ui --no-open
+uv run python scripts/verify_output.py SOURCE OUTPUT OUTPUT/.manga-localizer-work/transcript.json
 ```
 
 普通与 ML 依赖（含 CPU Paddle）记录在 `uv.lock`；Torch 再由启动脚本按 CPU/CUDA 12.9 安装对应轮子。Windows CUDA 配置使用 GPU Torch + CPU Paddle，避免两套运行时在同一进程加载冲突的 cuDNN DLL；文字识别与翻译仍使用 GPU。Linux CUDA 可把 Paddle 替换为 GPU wheel。CI 使用官方 `setup-uv`，在 Windows/Linux、Python 3.11/3.12 上运行不下载权重的核心测试。完整模型测试需在本地执行。

@@ -31,7 +31,8 @@ class SettingsPayload(BaseModel):
     target_language: str = "简体中文"
     story_context: bool = True
     context_pages: int = Field(3, ge=0, le=12)
-    preserve_sfx: bool = True
+    preserve_sfx: bool = False
+    quality_profile: Literal["quality", "fast"] = "quality"
     prefer_modelscope: bool = True
     device: str = "auto"
     inference_backend: Literal["builtin", "ollama", "online"] = "builtin"
@@ -46,6 +47,7 @@ class JobPayload(SettingsPayload):
     source: str
     output: str
     glossary: dict[str, str] = Field(default_factory=dict)
+    reviewed_transcript: str | None = None
 
 
 class BootstrapPayload(BaseModel):
@@ -244,7 +246,7 @@ def create_app(paths: AppPaths | None = None, pipeline_factory=None) -> FastAPI:
         if source == output:
             raise HTTPException(422, "Output folder must differ from source")
         settings = SettingsPayload(
-            **payload.model_dump(exclude={"source", "output", "glossary"})
+            **payload.model_dump(exclude={"source", "output", "glossary", "reviewed_transcript"})
         )
         active = save_settings_payload(settings)
         api_key = payload.online_api_key
@@ -257,6 +259,7 @@ def create_app(paths: AppPaths | None = None, pipeline_factory=None) -> FastAPI:
             story_context=payload.story_context,
             context_pages=payload.context_pages,
             preserve_sfx=payload.preserve_sfx,
+            quality_profile=payload.quality_profile,
             device=payload.device,
             glossary=payload.glossary,
             inference_backend=active.inference_backend,
@@ -265,6 +268,11 @@ def create_app(paths: AppPaths | None = None, pipeline_factory=None) -> FastAPI:
             online_base_url=active.online_base_url,
             online_model=active.online_model,
             online_api_key=api_key or "",
+            reviewed_transcript=(
+                Path(payload.reviewed_transcript).expanduser().resolve()
+                if payload.reviewed_transcript
+                else None
+            ),
         )
         return jobs.submit(request, total=image_count)
 

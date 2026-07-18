@@ -32,10 +32,10 @@ MODEL_REGISTRY = (
     ModelSpec(
         id="paddleocr",
         name="PaddleOCR",
-        role="文字区域检测",
+        role="文字检测与行级识别",
         provider="ModelScope via PaddleX",
-        repository="PP-OCRv5_mobile_det",
-        size="~5 MB",
+        repository="PP-OCRv5_mobile_det + PP-OCRv5_server_rec",
+        size="~180 MB",
         license="Apache-2.0",
     ),
     ModelSpec(
@@ -128,11 +128,15 @@ class ModelManager:
             MangaOcr(force_cpu=True)
         elif model_id == "paddleocr":
             self._require("paddleocr")
-            from paddleocr import TextDetection
+            from paddleocr import PaddleOCR
 
             callback(15, "Downloading PaddleOCR models through ModelScope/PaddleX")
-            TextDetection(
-                model_name="PP-OCRv5_mobile_det",
+            PaddleOCR(
+                text_detection_model_name="PP-OCRv5_mobile_det",
+                text_recognition_model_name="PP-OCRv5_server_rec",
+                use_doc_orientation_classify=False,
+                use_doc_unwarping=False,
+                use_textline_orientation=True,
                 device="cpu",
                 enable_mkldnn=False,
             )

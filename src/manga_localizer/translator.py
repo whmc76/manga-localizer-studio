@@ -77,7 +77,13 @@ class PromptTranslator:
     @staticmethod
     def _valid_translation(unit: TextUnit, text: str) -> bool:
         clean = text.strip()
-        return bool(clean) and not KANA_RE.search(clean) and len(clean) <= max(12, len(unit.ja) * 2)
+        context_leak = "固定译名" in clean or bool(re.search(r"第\d+页[：:]", clean))
+        return (
+            bool(clean)
+            and not KANA_RE.search(clean)
+            and not context_leak
+            and len(clean) <= max(60, len(unit.ja) * 6)
+        )
 
     @staticmethod
     def _first_line(text: str) -> str:
@@ -100,7 +106,10 @@ class PromptTranslator:
         for start in range(0, len(pages), chunk_pages):
             chunk = pages[start : start + chunk_pages]
             units = [
-                unit for page in chunk for unit in page.units if not (preserve_sfx and unit.is_sfx)
+                unit
+                for page in chunk
+                for unit in page.units
+                if not unit.skip and not (preserve_sfx and unit.is_sfx)
             ]
             if not units:
                 if progress:
@@ -112,7 +121,7 @@ class PromptTranslator:
                 source_rows.extend(
                     f"[{unit.id}] {unit.ja}"
                     for unit in page.units
-                    if not (preserve_sfx and unit.is_sfx)
+                    if not unit.skip and not (preserve_sfx and unit.is_sfx)
                 )
             previous = pages[max(0, start - context_pages) : start] if story_context else []
             prompt = f"""【背景信息】
@@ -123,7 +132,7 @@ class PromptTranslator:
 
 【任务】
 逐条翻译为自然、简洁的{self.target_language}，适合直接放进漫画气泡。
-译文尽量不超过原文字符数的 1.5 倍；不要把上下文补写进当前行，相邻单元不要重复同一信息。
+以自然中文和故事连贯为先；可以适度扩写省略的日语主语，但不要把上下文补写进当前行，相邻单元不要重复同一信息。
 严格保留每行开头的[id]，一条输入对应一条输出，不合并、不遗漏。只输出[id]和译文。
 
 {chr(10).join(source_rows)}"""
@@ -143,7 +152,7 @@ class PromptTranslator:
                 progress(min(start + len(chunk), len(pages)), len(pages))
 
     def _translate_one(self, unit: TextUnit, context: list[PageOCR], terms: str) -> str:
-        limit = max(6, min(80, len(unit.ja) * 2))
+        limit = max(12, min(120, len(unit.ja) * 4))
         context_text = self._page_text(context)[-1200:]
         prompt = f"""只翻译【原文】为自然简洁的{self.target_language}，只输出一行译文。
 上下文仅供理解，绝对不要复述上下文。译文不得含日文假名，姓名也译成中文；最多 {limit} 个字符。

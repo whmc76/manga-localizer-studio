@@ -104,3 +104,10 @@ def test_translation_quality_gate_rejects_kana_and_context_leakage():
     assert PromptTranslator._valid_translation(unit, "岳君") is True
     assert PromptTranslator._valid_translation(unit, "ガク君") is False
     assert PromptTranslator._valid_translation(unit, "第1页：这是被错误复述的一整段上下文") is False
+
+
+def test_translation_quality_gate_allows_natural_chinese_expansion():
+    unit = TextUnit("p001u01", [0, 0, 20, 20], [0, 0, 20, 20], "みんな引っ越した", 1.0)
+    assert PromptTranslator._valid_translation(
+        unit, "大家不是搬走了，就是不再来了。"
+    ) is True

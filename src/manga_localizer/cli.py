@@ -61,7 +61,9 @@ def run_pipeline(
     target_language: str = typer.Option("简体中文", "--target"),
     context_pages: int = typer.Option(3, min=0, max=12),
     story_context: bool = typer.Option(True, "--story-context/--no-story-context"),
-    preserve_sfx: bool = typer.Option(True, "--preserve-sfx/--translate-sfx"),
+    preserve_sfx: bool = typer.Option(False, "--preserve-sfx/--translate-sfx"),
+    quality_profile: str = typer.Option("quality", "--quality-profile"),
+    reviewed_transcript: Path | None = typer.Option(None, "--reviewed-transcript", exists=True),
     device: str = typer.Option("auto"),
     inference_backend: str = typer.Option("builtin", "--backend"),
     ollama_base_url: str = typer.Option("http://127.0.0.1:11434", "--ollama-url"),
@@ -78,6 +80,7 @@ def run_pipeline(
         context_pages=context_pages,
         story_context=story_context,
         preserve_sfx=preserve_sfx,
+        quality_profile=quality_profile,
         device=device,
         inference_backend=inference_backend,
         ollama_base_url=ollama_base_url,
@@ -85,6 +88,7 @@ def run_pipeline(
         online_base_url=online_base_url,
         online_model=online_model,
         online_api_key=os.environ.get("MLS_ONLINE_API_KEY", ""),
+        reviewed_transcript=reviewed_transcript,
     )
 
     def progress(phase: str, current: int, total: int, message: str):

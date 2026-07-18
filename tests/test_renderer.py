@@ -82,6 +82,15 @@ def test_cleanup_preserves_artwork_connected_to_detector_edge():
     assert np.all(cleaned[28:37, 43:57] == 255)
 
 
+def test_quality_cleanup_removes_boundary_connected_source_glyphs():
+    image = np.full((60, 60, 3), 255, dtype=np.uint8)
+    image[0:45, 28:33] = 0
+    cleaned, _, _ = ArtworkPreservingRenderer._erase_complete(
+        image.copy(), [0, 0, 60, 60]
+    )
+    assert np.all(cleaned[0:45, 28:33] == 255)
+
+
 def test_typesetting_is_clipped_to_declared_box(tmp_path):
     class OverdrawRenderer(ArtworkPreservingRenderer):
         def __init__(self):
