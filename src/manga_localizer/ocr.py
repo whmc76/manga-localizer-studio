@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import base64
+import difflib
 import json
 import re
 import warnings
@@ -29,6 +30,21 @@ KATAKANA_RE = re.compile(r"^[\u30a0-\u30ffー・…ッっ♡♥！？!?.．]+$")
 EXPLICIT_SKIP_REASONS = frozenset({"duplicate", "noise", "decorative", "preserve"})
 UNRESOLVED_SKIP_REASON = "unresolved"
 DEFAULT_OLLAMA_VISION_MODEL = "huihui_ai/qwen3.5-abliterated:9b"
+SFX_KINDS = (
+    "heartbeat",
+    "impact",
+    "engine",
+    "rumble",
+    "movement",
+    "friction",
+    "liquid",
+    "breath",
+    "vocalization",
+    "ambience",
+    "mechanical",
+    "other",
+    "none",
+)
 
 
 @contextmanager
@@ -76,6 +92,17 @@ def likely_sfx_text(text: str) -> bool:
     )
 
 
+def repeated_sfx_core(text: str) -> str:
+    """Extract a detector-supported repeated katakana core from mixed OCR noise."""
+    runs = re.findall(r"[ァ-ヺーッ]{4,}", text)
+    if not runs:
+        return ""
+    core = max(runs, key=len)
+    return (
+        core if any(core.count(char) >= 3 for char in set(core) - {"ッ", "ー"}) else ""
+    )
+
+
 def semantic_sfx_classification(text: str, score: float, vision_is_sfx: bool) -> bool:
     """Resolve unsafe short-fragment and VLM role classifications conservatively.
 
@@ -111,6 +138,20 @@ def semantic_sfx_classification(text: str, score: float, vision_is_sfx: bool) ->
     if score < 0.70 and len(semantic_chars) <= 3:
         return True
     return vision_is_sfx
+
+
+def likely_dialogue_text(text: str) -> bool:
+    """Recognize grammatical Japanese that must not become protected artwork.
+
+    This is intentionally narrower than general Japanese detection.  It catches
+    short hiragana-bearing phrases such as ``ここは`` while leaving kanji-only
+    shirt slogans, logos, and katakana sound effects to the visual role model.
+    """
+    clean = re.sub(r"[\s．。…、，,!?！？:：♡♥〰〜～]", "", text)
+    if likely_sfx_text(text) or not clean:
+        return False
+    hiragana_count = len(re.findall(r"[ぁ-ゖ]", clean))
+    return hiragana_count >= 2 and len(clean) >= 3
 
 
 def tiny_low_confidence_nontext(page: PageOCR, unit: TextUnit) -> bool:
@@ -213,13 +254,89 @@ def prefer_semantic_ocr(current: str, candidate: str, score: float) -> bool:
     # Vision models sometimes stop after the first clause while assigning high
     # confidence. If the proposed text is merely a short prefix/subsequence of
     # a longer detector crop, MangaOCR contains strictly more source evidence.
-    if (
-        len(candidate_clean) < len(current_clean) * 0.72
-        and candidate_clean
-        and candidate_clean in current_clean
-    ):
+    if len(candidate_clean) < len(current_clean) * 0.72:
         return False
-    return True
+    agreement = difflib.SequenceMatcher(None, current_clean, candidate_clean).ratio()
+    contained = current_clean in candidate_clean or candidate_clean in current_clean
+    return contained or agreement >= 0.5
+
+
+def semantic_text_agreement(current: str, candidate: str) -> bool:
+    """Compare OCR strings without requiring Japanese script.
+
+    Scene text and clothing logos can be Latin, so the Japanese-only semantic
+    correction gate is not suitable when confirming an ``artwork`` role.
+    """
+
+    def normalize(value: str) -> str:
+        return re.sub(r"\W+", "", value).casefold()
+
+    current_clean = normalize(current)
+    candidate_clean = normalize(candidate)
+    if not current_clean or not candidate_clean:
+        return False
+    return (
+        current_clean == candidate_clean
+        or difflib.SequenceMatcher(None, current_clean, candidate_clean).ratio() >= 0.8
+    )
+
+
+def merge_semantic_missing(*batches: list[dict]) -> list[dict]:
+    """Union repeated visual omissions without merging two equal nearby sounds."""
+    merged: list[dict] = []
+    for item in (entry for batch in batches for entry in batch):
+        try:
+            box = [int(value) for value in item["bbox"]]
+        except (KeyError, TypeError, ValueError):
+            box = []
+        text = re.sub(r"[\s．。…、，,!?！？:：♡♥〰〜～]", "", str(item.get("text", "")))
+        duplicate = False
+        for known in merged:
+            known_text = re.sub(
+                r"[\s．。…、，,!?！？:：♡♥〰〜～]",
+                "",
+                str(known.get("text", "")),
+            )
+            try:
+                known_box = [int(value) for value in known["bbox"]]
+            except (KeyError, TypeError, ValueError):
+                known_box = []
+            if text != known_text or len(box) != 4 or len(known_box) != 4:
+                continue
+            overlap = _axis_overlap(box[0], box[2], known_box[0], known_box[2]) * (
+                _axis_overlap(box[1], box[3], known_box[1], known_box[3])
+            )
+            if overlap >= min(_area(box), _area(known_box)) * 0.35:
+                duplicate = True
+                if float(item.get("score", 0.0)) > float(known.get("score", 0.0)):
+                    known.update(item)
+                break
+        if not duplicate:
+            merged.append(dict(item))
+    return merged
+
+
+def oversized_text_region(page: PageOCR, unit: TextUnit) -> bool:
+    """Identify detector regions too broad to be safe destructive text masks."""
+    semantic = re.sub(r"[\s．。…、，,!?！？:：♡♥〰〜～]", "", unit.ja)
+    return bool(
+        unit.special != "cover_title"
+        and not unit.is_sfx
+        and semantic
+        and _area(unit.bbox) >= page.width * page.height * 0.06
+        and _area(unit.bbox) / len(semantic) > 40_000
+    )
+
+
+def oversized_decorative_sfx(page: PageOCR, unit: TextUnit) -> bool:
+    """Preserve page-spanning display SFX instead of destructively replacing it."""
+    semantic = re.sub(r"[\s．。…、，,!?！？:：♡♥〰〜～]", "", unit.ja)
+    return bool(
+        unit.is_sfx
+        and semantic
+        and _area(unit.bbox) >= page.width * page.height * 0.06
+        and _area(unit.bbox) / len(semantic) > 40_000
+    )
 
 
 def merge_region_candidates(primary: list[dict], secondary: list[dict]) -> list[dict]:
@@ -240,6 +357,48 @@ def merge_region_candidates(primary: list[dict], secondary: list[dict]) -> list[
         if not duplicate:
             merged.append(candidate)
     return merged
+
+
+def deduplicate_nested_region_groups(
+    groups: list[list[dict]],
+) -> list[tuple[list[dict], list[int]]]:
+    """Keep the broadest recovered group when another proposal nests inside it."""
+    accepted: list[tuple[list[dict], list[int]]] = []
+    for group in sorted(groups, key=lambda item: _area(_union_box(item)), reverse=True):
+        group_box = _union_box(group)
+        nested = any(
+            _axis_overlap(group_box[0], group_box[2], box[0], box[2])
+            * _axis_overlap(group_box[1], group_box[3], box[1], box[3])
+            >= min(_area(group_box), _area(box)) * 0.65
+            for _accepted, box in accepted
+        )
+        if not nested:
+            accepted.append((group, group_box))
+    return accepted
+
+
+def prune_nested_duplicate_units(page: PageOCR) -> PageOCR:
+    """Drop smaller effect units recovered inside an existing broad effect."""
+    kept: list[TextUnit] = []
+    for unit in sorted(page.units, key=lambda item: _area(item.bbox), reverse=True):
+        area = _area(unit.bbox)
+        nested_effect = any(
+            unit.is_sfx
+            and parent.is_sfx
+            and _area(parent.bbox) >= area * 1.5
+            and _axis_overlap(
+                unit.bbox[0], unit.bbox[2], parent.bbox[0], parent.bbox[2]
+            )
+            * _axis_overlap(unit.bbox[1], unit.bbox[3], parent.bbox[1], parent.bbox[3])
+            >= area * 0.85
+            for parent in kept
+        )
+        if not nested_effect:
+            kept.append(unit)
+    page.units = sorted(kept, key=lambda unit: (unit.bbox[1] // 180, -unit.bbox[0]))
+    for index, unit in enumerate(page.units, start=1):
+        unit.id = f"p{page.page:03d}u{index:02d}"
+    return page
 
 
 def list_images(folder: Path) -> list[Path]:
@@ -328,11 +487,68 @@ def _connects(a: dict, b: dict) -> bool:
     y_gap = _axis_gap(abox[1], abox[3], bbox[1], bbox[3])
     x_overlap = _axis_overlap(abox[0], abox[2], bbox[0], bbox[2])
     y_overlap = _axis_overlap(abox[1], abox[3], bbox[1], bbox[3])
+    a_vertical, b_vertical = ah >= aw * 1.5, bh >= bw * 1.5
+    a_horizontal, b_horizontal = aw >= ah * 1.5, bw >= bh * 1.5
+    # A large horizontal garment/logo region can sit a few pixels from a
+    # vertical speech balloon.  Proximity alone must not merge orthogonal text
+    # systems into one destructive unit. Ruby remains compatible because it is
+    # normally narrow/neutral rather than a large strongly horizontal block.
+    if (a_vertical and b_horizontal) or (a_horizontal and b_vertical):
+        return False
     if ah >= aw * 1.25 and bh >= bw * 1.25:
         return x_gap <= 72 and y_overlap / max(1, min(ah, bh)) >= 0.22
     if aw >= ah * 1.25 and bw >= bh * 1.25:
         return y_gap <= 58 and x_overlap / max(1, min(aw, bw)) >= 0.22
     return x_gap <= 36 and y_gap <= 36
+
+
+def prune_detached_orthogonal_outliers(boxes: list[list[int]]) -> list[list[int]]:
+    """Drop a large detached scene-text box attached to a tighter text group.
+
+    This is a preservation-only guard for legacy/reviewed transcripts as well
+    as detector output.  It never invents geometry: at least two smaller,
+    parallel boxes must agree, while the candidate is both orthogonal, more
+    than four times their median area, and non-overlapping.
+    """
+    if len(boxes) < 3:
+        return [list(box) for box in boxes]
+
+    def orientation(box: list[int]) -> str:
+        width = max(1, box[2] - box[0])
+        height = max(1, box[3] - box[1])
+        if width >= height * 1.5:
+            return "horizontal"
+        if height >= width * 1.5:
+            return "vertical"
+        return "neutral"
+
+    areas = sorted(_area(box) for box in boxes)
+    median_area = areas[len(areas) // 2]
+    kept: list[list[int]] = []
+    for candidate in boxes:
+        candidate_orientation = orientation(candidate)
+        peers = [
+            other
+            for other in boxes
+            if other is not candidate
+            and orientation(other) not in {"neutral", candidate_orientation}
+            and _area(other) * 3 <= _area(candidate)
+        ]
+        detached = all(
+            _axis_overlap(candidate[0], candidate[2], peer[0], peer[2])
+            * _axis_overlap(candidate[1], candidate[3], peer[1], peer[3])
+            == 0
+            for peer in peers
+        )
+        is_outlier = (
+            candidate_orientation != "neutral"
+            and len(peers) >= 2
+            and _area(candidate) > median_area * 4
+            and detached
+        )
+        if not is_outlier:
+            kept.append(list(candidate))
+    return kept or [list(box) for box in boxes]
 
 
 def _groups(regions: list[dict]) -> list[list[dict]]:
@@ -471,6 +687,94 @@ def _light_on_dark_regions(image: Image.Image) -> list[dict]:
                 continue
             candidates.append({"box": box, "text": "", "score": 0.5, "reverse": True})
     return candidates
+
+
+def _outlined_light_text_regions_near(
+    image: Image.Image,
+    coarse: list[int],
+    score: float,
+    minimum_components: int = 2,
+) -> list[dict]:
+    """Recover source-derived boxes for white-filled, dark-outlined display text.
+
+    Manga effects commonly use white glyph interiors with a black outline over
+    mid-tone artwork.  Paddle can miss the whole word, while full-page vision
+    supplies only an intentionally unsafe coarse hint.  This fallback searches
+    around that hint for bright connected glyph interiors, verifies that each
+    has both a dark outline and tonal artwork nearby, and returns padded boxes
+    derived from the source pixels.  It never promotes the VLM box itself to an
+    erase region; MangaOCR still has to recognize Japanese from the resulting
+    group before ``recover_missing`` accepts it.
+    """
+    gray = np.asarray(image.convert("L"))
+    page_height, page_width = gray.shape
+    width = max(1, coarse[2] - coarse[0])
+    height = max(1, coarse[3] - coarse[1])
+    search = [
+        max(0, coarse[0] - round(width * 1.5)),
+        max(0, coarse[1] - round(height * 1.5)),
+        min(page_width, coarse[2] + round(width * 1.5)),
+        min(page_height, coarse[3] + round(height * 1.5)),
+    ]
+    local = gray[search[1] : search[3], search[0] : search[2]]
+    if local.size == 0:
+        return []
+    bright = (local >= 220).astype(np.uint8)
+    count, _, stats, _ = cv2.connectedComponentsWithStats(bright, 8)
+    center_x = (coarse[0] + coarse[2]) / 2
+    center_y = (coarse[1] + coarse[3]) / 2
+    minimum_area = max(80, round(width * height * 0.008))
+    regions: list[dict] = []
+    for label in range(1, count):
+        x, y, box_width, box_height, area = (int(value) for value in stats[label])
+        if (
+            area < minimum_area
+            or box_width < 8
+            or box_height < 8
+            or area / max(1, box_width * box_height) < 0.15
+        ):
+            continue
+        absolute_x = search[0] + x
+        absolute_y = search[1] + y
+        component_x = absolute_x + box_width / 2
+        component_y = absolute_y + box_height / 2
+        if (
+            abs(component_x - center_x) / width > 2.2
+            or abs(component_y - center_y) / height > 2.2
+        ):
+            continue
+        ring = max(6, round(max(box_width, box_height) * 0.16))
+        ring_box = [
+            max(0, absolute_x - ring),
+            max(0, absolute_y - ring),
+            min(page_width, absolute_x + box_width + ring),
+            min(page_height, absolute_y + box_height + ring),
+        ]
+        neighborhood = gray[ring_box[1] : ring_box[3], ring_box[0] : ring_box[2]]
+        dark_ratio = float((neighborhood < 70).mean())
+        midtone_ratio = float(((neighborhood >= 70) & (neighborhood < 205)).mean())
+        if dark_ratio < 0.05 or midtone_ratio < 0.12:
+            continue
+        outline_pad = max(4, round(max(box_width, box_height) * 0.1))
+        regions.append(
+            {
+                "box": [
+                    max(0, absolute_x - outline_pad),
+                    max(0, absolute_y - outline_pad),
+                    min(page_width, absolute_x + box_width + outline_pad),
+                    min(page_height, absolute_y + box_height + outline_pad),
+                ],
+                "text": "",
+                "score": round(score, 4),
+                "outlined_fallback": True,
+            }
+        )
+    # A single highlight is too easy to confuse with artwork glare. Display
+    # lettering produces multiple aligned interiors even when one Japanese
+    # character contains several disconnected white pieces.
+    if len(regions) < minimum_components:
+        return []
+    return regions
 
 
 class PaddleMangaOCR:
@@ -719,12 +1023,23 @@ class PaddleMangaOCR:
             return page
         image = Image.open(image_path).convert("RGB")
         recovered_regions: list[dict] = []
-        existing_boxes = [
-            erase_box
-            for unit in page.units
-            for erase_box in (unit.erase_boxes or [unit.bbox])
+        existing_boxes = [unit.bbox for unit in page.units] + [
+            erase_box for unit in page.units for erase_box in unit.erase_boxes
         ]
-        for item in missing[:40]:
+        # Longer readings subsume fragmentary reports from repeated VLM passes
+        # (for example ``ボォ`` before ``ボ``).
+        ordered_missing = sorted(
+            missing[:40],
+            key=lambda item: len(
+                re.sub(
+                    r"[\s．。…、，,!?！？:：♡♥〰〜～]",
+                    "",
+                    str(item.get("text", "")),
+                )
+            ),
+            reverse=True,
+        )
+        for item in ordered_missing:
             try:
                 normalized = [int(value) for value in item["bbox"]]
             except (KeyError, TypeError, ValueError):
@@ -753,6 +1068,169 @@ class PaddleMangaOCR:
                 (round(crop.width * scale), round(crop.height * scale)),
                 Image.Resampling.LANCZOS,
             )
+            outlined_regions = (
+                _outlined_light_text_regions_near(
+                    image,
+                    coarse,
+                    float(item.get("score", 0.0)),
+                    minimum_components=1,
+                )
+                if bool(item.get("is_sfx", False))
+                else []
+            )
+            semantic_text = str(item.get("text", "")).strip()
+
+            # A full-page VLM can read an outlined sound more accurately than
+            # MangaOCR while still proposing only coarse geometry.  When that
+            # proposal overlaps detector-owned erase components of an existing
+            # SFX unit, enrich the reading but never enlarge the erase mask from
+            # the VLM box.  This also repairs a prior artwork-role hallucination.
+            if bool(item.get("is_sfx", False)) and semantic_sfx_classification(
+                semantic_text, float(item.get("score", 0.0)), True
+            ):
+                coarse_area = max(1, _area(coarse))
+                exact_sfx_matches: list[tuple[float, TextUnit]] = []
+                for unit in page.units:
+                    if not (unit.is_sfx or likely_sfx_text(unit.ja)):
+                        continue
+                    overlap_area = sum(
+                        _axis_overlap(coarse[0], coarse[2], box[0], box[2])
+                        * _axis_overlap(coarse[1], coarse[3], box[1], box[3])
+                        for box in (unit.erase_boxes or [unit.bbox])
+                    )
+                    coverage = min(coarse_area, overlap_area) / coarse_area
+                    group_overlap = (
+                        _axis_overlap(coarse[0], coarse[2], unit.bbox[0], unit.bbox[2])
+                        * _axis_overlap(
+                            coarse[1], coarse[3], unit.bbox[1], unit.bbox[3]
+                        )
+                        / coarse_area
+                    )
+                    short_group_member = bool(
+                        len(re.sub(r"\W+", "", semantic_text)) <= 3
+                        and len(unit.erase_boxes) >= 2
+                        and group_overlap >= 0.8
+                    )
+                    if coverage >= 0.25 or short_group_member:
+                        exact_sfx_matches.append((max(coverage, group_overlap), unit))
+                if exact_sfx_matches:
+                    repaired = max(exact_sfx_matches, key=lambda pair: pair[0])[1]
+                    current_clean = re.sub(
+                        r"[\s．。…、，,!?！？:：♡♥〰〜～]", "", repaired.ja
+                    )
+                    candidate_clean = re.sub(
+                        r"[\s．。…、，,!?！？:：♡♥〰〜～]", "", semantic_text
+                    )
+                    if candidate_clean and candidate_clean not in current_clean:
+                        repaired.ja = f"{repaired.ja}\n{semantic_text}".strip()
+                    repaired.score = max(
+                        repaired.score, round(float(item.get("score", 0.0)), 4)
+                    )
+                    repaired.is_sfx = True
+                    repaired.skip = False
+                    repaired.skip_reason = ""
+                    if repaired.special in {"artwork_text", "ocr_noise"}:
+                        repaired.special = ""
+                    continue
+            matching_units = [
+                unit
+                for unit in page.units
+                if sum(
+                    1
+                    for region in outlined_regions
+                    if _axis_overlap(
+                        region["box"][0],
+                        region["box"][2],
+                        unit.bbox[0],
+                        unit.bbox[2],
+                    )
+                    * _axis_overlap(
+                        region["box"][1],
+                        region["box"][3],
+                        unit.bbox[1],
+                        unit.bbox[3],
+                    )
+                    >= _area(region["box"]) * 0.35
+                )
+                >= (1 if unit.score <= 0.1 else 2)
+            ]
+            if (
+                JP_RE.search(semantic_text)
+                and matching_units
+                and any(unit.is_sfx or unit.score <= 0.6 for unit in matching_units)
+            ):
+                repaired = min(
+                    matching_units,
+                    key=lambda unit: abs(
+                        (unit.bbox[0] + unit.bbox[2]) / 2 - (coarse[0] + coarse[2]) / 2
+                    )
+                    + abs(
+                        (unit.bbox[1] + unit.bbox[3]) / 2 - (coarse[1] + coarse[3]) / 2
+                    ),
+                )
+                repaired.ja = semantic_text
+                repaired.score = max(
+                    repaired.score, round(float(item.get("score", 0.0)), 4)
+                )
+                repaired.is_sfx = True
+                repaired.skip = False
+                repaired.skip_reason = ""
+                relevant_outlined = [
+                    region["box"]
+                    for region in outlined_regions
+                    if _axis_overlap(
+                        region["box"][0],
+                        region["box"][2],
+                        repaired.bbox[0],
+                        repaired.bbox[2],
+                    )
+                    * _axis_overlap(
+                        region["box"][1],
+                        region["box"][3],
+                        repaired.bbox[1],
+                        repaired.bbox[3],
+                    )
+                    >= min(_area(region["box"]), _area(repaired.bbox)) * 0.2
+                    and _area(region["box"]) <= _area(repaired.bbox) * 2.0
+                    and region["box"][2] - region["box"][0]
+                    <= (repaired.bbox[2] - repaired.bbox[0]) * 2.0
+                    and region["box"][3] - region["box"][1]
+                    <= (repaired.bbox[3] - repaired.bbox[1]) * 2.0
+                ]
+                repaired.erase_boxes = [
+                    *repaired.erase_boxes,
+                    *[
+                        box
+                        for box in relevant_outlined
+                        if box not in repaired.erase_boxes
+                    ],
+                ]
+                repaired.bbox = [
+                    min(box[0] for box in repaired.erase_boxes),
+                    min(box[1] for box in repaired.erase_boxes),
+                    max(box[2] for box in repaired.erase_boxes),
+                    max(box[3] for box in repaired.erase_boxes),
+                ]
+                repair_pad = max(
+                    10,
+                    round(
+                        max(
+                            repaired.bbox[2] - repaired.bbox[0],
+                            repaired.bbox[3] - repaired.bbox[1],
+                        )
+                        * 0.06
+                    ),
+                )
+                repaired.crop_bbox = [
+                    max(0, repaired.bbox[0] - repair_pad),
+                    max(0, repaired.bbox[1] - repair_pad),
+                    min(image.width, repaired.bbox[2] + repair_pad),
+                    min(image.height, repaired.bbox[3] + repair_pad),
+                ]
+                if repaired.special in {"artwork_text", "ocr_noise"}:
+                    repaired.special = ""
+                continue
+            item_regions: list[dict] = []
             results = list(self.detector.predict(np.asarray(enlarged)))
             payload = self._payload(results[0]) if results else {}
             for region in self._regions(payload):
@@ -773,13 +1251,39 @@ class PaddleMangaOCR:
                 )
                 if covered:
                     continue
-                recovered_regions.append(
-                    {"box": mapped, "text": "", "score": region["score"]}
+                item_regions.append(
+                    {
+                        "box": mapped,
+                        "text": "",
+                        "score": region["score"],
+                        "semantic_text": semantic_text,
+                        "semantic_is_sfx": bool(item.get("is_sfx", False)),
+                    }
                 )
+            if not item_regions and bool(item.get("is_sfx", False)):
+                item_regions = outlined_regions
+                for region in item_regions:
+                    region["semantic_text"] = str(item.get("text", "")).strip()
+                    region["semantic_is_sfx"] = True
+                item_regions = [
+                    region
+                    for region in item_regions
+                    if not any(
+                        _axis_overlap(
+                            region["box"][0], region["box"][2], box[0], box[2]
+                        )
+                        * _axis_overlap(
+                            region["box"][1], region["box"][3], box[1], box[3]
+                        )
+                        >= min(_area(region["box"]), _area(box)) * 0.65
+                        for box in existing_boxes
+                    )
+                ]
+            recovered_regions.extend(item_regions)
 
         recovered_regions = merge_region_candidates([], recovered_regions)
-        for group in _groups(recovered_regions):
-            box = _union_box(group)
+        accepted_groups = deduplicate_nested_region_groups(_groups(recovered_regions))
+        for group, box in accepted_groups:
             pad_x = max(10, round((box[2] - box[0]) * 0.06))
             pad_y = max(10, round((box[3] - box[1]) * 0.05))
             crop_box = [
@@ -791,6 +1295,25 @@ class PaddleMangaOCR:
             refined = self.reader(image.crop(tuple(crop_box))).strip()
             if not JP_RE.search(refined):
                 continue
+            semantic_candidates = {
+                str(item.get("semantic_text", "")).strip()
+                for item in group
+                if JP_RE.search(str(item.get("semantic_text", "")))
+            }
+            expected_sfx = any(
+                bool(item.get("semantic_is_sfx", False)) for item in group
+            )
+            refined_is_sfx = semantic_sfx_classification(refined, 0.8, expected_sfx)
+            if expected_sfx and not refined_is_sfx:
+                continue
+            # For source-derived outlined-glyph geometry, MangaOCR is the
+            # independent confirmation that the pixels are Japanese text; the
+            # full-page visual read can then supply the exact SFX spelling.
+            # This avoids keeping a MangaOCR near-miss such as レキット when
+            # the visual audit consistently saw ムチッ, without ever trusting
+            # the VLM's coarse coordinates for destructive editing.
+            if len(semantic_candidates) == 1 and expected_sfx and refined_is_sfx:
+                refined = semantic_candidates.pop()
             page.units.append(
                 TextUnit(
                     id="",
@@ -830,7 +1353,15 @@ class OllamaVisionOCR:
                 "stream": False,
                 "think": False,
                 "format": schema,
-                "options": {"temperature": 0, "num_predict": 4096},
+                # OCR pages need bounded generation, not the model's full 262K
+                # KV cache.  A 32K working window still leaves ample room for
+                # two high-resolution images plus exhaustive JSON while keeping
+                # the local 9B path responsive on consumer GPUs.
+                "options": {
+                    "temperature": 0,
+                    "num_ctx": 32_768,
+                    "num_predict": 8192,
+                },
                 "messages": [
                     {
                         "role": "user",
@@ -1002,6 +1533,9 @@ class OllamaVisionOCR:
         prompt = f"""你会收到同一张日语漫画的两幅图：第一幅是无标记原图，第二幅有红色编号框。
 逐框结合整页上下文校正 OCR。红框和数字是程序标记，不属于漫画文字。
 必须为每个 id 返回一项；不要翻译。text 只写框内日文，保留标点和语气符号。
+role 必须区分 dialogue（对白）、narration（旁白）、sfx（拟声/效果字）、artwork（衣服印花、商标、招牌或画面道具文字）和 noise（误检）。
+衣服、包装和背景物件上的装饰字属于 artwork，不能当对白；一个框同时含对白和 artwork 时只抄对白并选 dialogue。
+仅 role=sfx 时填写最接近的 effect_kind，否则填 none。
 如果页面上还有未被任何红框覆盖的可见日文，写入 missing，bbox 使用 0 到 1000 的归一化整数；没有则返回空数组。
 
 当前机器 OCR 候选：
@@ -1012,9 +1546,13 @@ class OllamaVisionOCR:
                 "id": {"type": "string", "enum": ids},
                 "text": {"type": "string"},
                 "score": {"type": "number", "minimum": 0, "maximum": 1},
-                "is_sfx": {"type": "boolean"},
+                "role": {
+                    "type": "string",
+                    "enum": ["dialogue", "narration", "sfx", "artwork", "noise"],
+                },
+                "effect_kind": {"type": "string", "enum": list(SFX_KINDS)},
             },
-            "required": ["id", "text", "score", "is_sfx"],
+            "required": ["id", "text", "score", "role", "effect_kind"],
         }
         missing_schema = {
             "type": "object",
@@ -1055,10 +1593,42 @@ class OllamaVisionOCR:
             if item:
                 candidate = str(item.get("text", "")).strip()
                 score = float(item.get("score", 0.0))
-                if prefer_semantic_ocr(unit.ja, candidate, score):
-                    unit.ja = candidate
-                    unit.score = max(unit.score, round(score, 4))
-                vision_is_sfx = bool(item.get("is_sfx", False))
+                role = str(item.get("role", "")).lower()
+                if not role and "is_sfx" in item:
+                    role = "sfx" if bool(item.get("is_sfx")) else "dialogue"
+                # The exact detector has already established that this sparse,
+                # page-spanning group is the cover/title display text.  A VLM
+                # often calls stylized titles "artwork" when viewed in isolation;
+                # that semantic label must not turn translatable title text into
+                # a protected logo or sound effect.
+                if unit.special == "cover_title":
+                    role = "narration"
+                agrees = prefer_semantic_ocr(unit.ja, candidate, score)
+                role_agrees = agrees or bool(
+                    role == "artwork" and semantic_text_agreement(unit.ja, candidate)
+                )
+                source_looks_like_sfx = unit.is_sfx or likely_sfx_text(unit.ja)
+                source_looks_like_dialogue = likely_dialogue_text(unit.ja)
+                if (
+                    role in {"artwork", "noise"}
+                    and score >= 0.92
+                    and role_agrees
+                    and not source_looks_like_sfx
+                    and not source_looks_like_dialogue
+                ):
+                    unit.zh = ""
+                    unit.skip = True
+                    unit.skip_reason = "preserve" if role == "artwork" else "noise"
+                    unit.special = "artwork_text" if role == "artwork" else "ocr_noise"
+                    continue
+                if not agrees:
+                    continue
+                unit.ja = candidate
+                unit.score = max(unit.score, round(score, 4))
+                vision_is_sfx = role == "sfx"
+                effect_kind = str(item.get("effect_kind", "none")).lower()
+                if vision_is_sfx and effect_kind in SFX_KINDS and effect_kind != "none":
+                    unit.special = f"sfx:{effect_kind}"
             unit.is_sfx = semantic_sfx_classification(
                 unit.ja,
                 unit.score,
@@ -1073,6 +1643,50 @@ class OllamaVisionOCR:
         ]
         return page, missing
 
+    def find_missing(self, image_path: Path, page: PageOCR) -> list[dict]:
+        """Run a recall-only visual pass, isolated from per-id OCR correction."""
+        if not page.units:
+            return []
+        with Image.open(image_path) as source:
+            image = source.convert("RGB")
+        missing_schema = {
+            "type": "object",
+            "properties": {
+                "text": {"type": "string"},
+                "bbox": {
+                    "type": "array",
+                    "items": {"type": "integer", "minimum": 0, "maximum": 1000},
+                    "minItems": 4,
+                    "maxItems": 4,
+                },
+                "score": {"type": "number", "minimum": 0, "maximum": 1},
+                "is_sfx": {"type": "boolean"},
+            },
+            "required": ["text", "bbox", "score", "is_sfx"],
+        }
+        schema = {
+            "type": "object",
+            "properties": {
+                "missing": {"type": "array", "items": missing_schema},
+            },
+            "required": ["missing"],
+        }
+        prompt = """第一张是日语漫画原图，第二张有红色编号框。此任务只做漏字召回，不校正红框 id。
+逐处检查原图里所有没有被红框完整覆盖、或只被红框覆盖一部分的可见文字，特别注意白色填充黑色描边、斜排、竖排、拟声词和标点效果字。
+missing.text 必须逐字抄写完整日文，不翻译；bbox 使用 0 到 1000 的整页归一化整数并包住完整文字。已经被红框完整覆盖的文字不要重复。没有遗漏才返回空数组。"""
+        payload = self._chat(
+            [image_path.read_bytes(), self._annotated_image(image, page)],
+            prompt,
+            schema,
+        )
+        return [
+            item
+            for item in payload.get("missing", [])
+            if isinstance(item, dict)
+            and JP_RE.search(str(item.get("text", "")))
+            and float(item.get("score", 0.0)) >= 0.72
+        ]
+
     @staticmethod
     def _local_crop_is_suspicious(unit: TextUnit) -> bool:
         """Flag OCR text whose length is implausible for its exact geometry."""
@@ -1083,7 +1697,7 @@ class OllamaVisionOCR:
         return (
             unit.score <= 0.05
             or area_per_character < 350
-            or area_per_character > 30_000
+            or area_per_character > 20_000
         )
 
     @staticmethod
@@ -1125,7 +1739,7 @@ class OllamaVisionOCR:
         return "\n".join(kept)
 
     def refine_local_crops(
-        self, image_path: Path, page: PageOCR, batch_size: int = 8
+        self, image_path: Path, page: PageOCR, batch_size: int = 1
     ) -> PageOCR:
         """Audit OCR text and semantic role from tight, ordered source crops.
 
@@ -1139,8 +1753,59 @@ class OllamaVisionOCR:
             return page
         with Image.open(image_path) as source:
             image = source.convert("RGB")
-        for start in range(0, len(page.units), max(1, batch_size)):
-            units = page.units[start : start + max(1, batch_size)]
+        # Normalize legacy/reviewed detector groups before producing audit
+        # crops. Otherwise one broad horizontal shirt/logo box can dominate a
+        # vertical dialogue crop and make the VLM protect the entire unit.
+        for unit in page.units:
+            if not unit.erase_boxes:
+                continue
+            cleaned = prune_detached_orthogonal_outliers(unit.erase_boxes)
+            if cleaned == unit.erase_boxes:
+                continue
+            unit.erase_boxes = cleaned
+            unit.bbox = [
+                min(box[0] for box in cleaned),
+                min(box[1] for box in cleaned),
+                max(box[2] for box in cleaned),
+                max(box[3] for box in cleaned),
+            ]
+            pad = max(
+                10,
+                round(
+                    max(
+                        unit.bbox[2] - unit.bbox[0],
+                        unit.bbox[3] - unit.bbox[1],
+                    )
+                    * 0.04
+                ),
+            )
+            unit.crop_bbox = [
+                max(0, unit.bbox[0] - pad),
+                max(0, unit.bbox[1] - pad),
+                min(page.width, unit.bbox[2] + pad),
+                min(page.height, unit.bbox[3] + pad),
+            ]
+        audit_units = [
+            unit
+            for unit in page.units
+            if (
+                unit.skip
+                and (
+                    unit.skip_reason != "preserve"
+                    or not JP_RE.search(unit.ja)
+                    or unit.score < 0.65
+                    or self._local_crop_is_suspicious(unit)
+                )
+            )
+            or not JP_RE.search(unit.ja)
+            or (
+                not unit.is_sfx
+                and (unit.score < 0.65 or self._local_crop_is_suspicious(unit))
+            )
+            or (unit.is_sfx and unit.score < 0.65 and not likely_sfx_text(unit.ja))
+        ]
+        for start in range(0, len(audit_units), max(1, batch_size)):
+            units = audit_units[start : start + max(1, batch_size)]
             ids = [unit.id for unit in units]
             item_schema = {
                 "type": "object",
@@ -1149,11 +1814,19 @@ class OllamaVisionOCR:
                     "text": {"type": "string"},
                     "role": {
                         "type": "string",
-                        "enum": ["dialogue", "narration", "sfx", "nontext"],
+                        "enum": [
+                            "dialogue",
+                            "narration",
+                            "sfx",
+                            "artwork",
+                            "noise",
+                            "nontext",
+                        ],
                     },
+                    "effect_kind": {"type": "string", "enum": list(SFX_KINDS)},
                     "confidence": {"type": "number", "minimum": 0, "maximum": 1},
                 },
-                "required": ["id", "text", "role", "confidence"],
+                "required": ["id", "text", "role", "effect_kind", "confidence"],
             }
             schema = {
                 "type": "object",
@@ -1165,7 +1838,8 @@ class OllamaVisionOCR:
             order = "、".join(ids)
             prompt = f"""你会依次收到 {len(units)} 张漫画文字框的紧密局部放大图，对应 id 顺序为：{order}。
 每张图只抄写局部内真正可见的日文，禁止根据故事或相邻图片补全。
-role 选择 dialogue（对白）、narration（旁白）、sfx（拟声/效果字）或 nontext（无可替换文字）。看不清就选 nontext。
+role 选择 dialogue（对白）、narration（旁白）、sfx（拟声/效果字）、artwork（衣服印花、商标、招牌或道具文字）或 noise（误检）。看不清就选 noise。
+仅 role=sfx 时根据画面填写 effect_kind，否则填写 none。衣服或背景物件上的文字不能当对白。
 必须为每个 id 返回一项。"""
             payload = self._chat(
                 [self._tight_crop_bytes(image, unit) for unit in units],
@@ -1185,10 +1859,126 @@ role 选择 dialogue（对白）、narration（旁白）、sfx（拟声/效果�
                 confidence = float(item.get("confidence", 0.0))
                 candidate = self._normalize_local_crop_text(str(item.get("text", "")))
                 suspicious = self._local_crop_is_suspicious(unit)
-                if role in {"sfx", "nontext"}:
-                    threshold = 0.68 if suspicious or unit.is_sfx else 0.88
+                cover_title = unit.special == "cover_title"
+                if cover_title:
+                    role = "narration"
+                if role in {"artwork", "noise", "nontext"}:
+                    agrees = prefer_semantic_ocr(unit.ja, candidate, confidence)
+                    latin_logo = bool(
+                        role == "artwork"
+                        and suspicious
+                        and confidence >= 0.95
+                        and re.fullmatch(
+                            r"[A-Za-z0-9][A-Za-z0-9 ._&'/-]{3,}", candidate
+                        )
+                    )
+                    artwork_agrees = (
+                        agrees
+                        or bool(
+                            role == "artwork"
+                            and semantic_text_agreement(unit.ja, candidate)
+                        )
+                        or latin_logo
+                    )
+                    source_looks_like_sfx = unit.is_sfx or bool(
+                        JP_RE.search(unit.ja) and likely_sfx_text(unit.ja)
+                    )
+                    source_looks_like_dialogue = likely_dialogue_text(unit.ja)
+                    if source_looks_like_sfx and unit.special in {
+                        "artwork_text",
+                        "ocr_noise",
+                    }:
+                        unit.skip = False
+                        unit.skip_reason = ""
+                        unit.special = ""
+                    if (
+                        confidence >= 0.9
+                        and artwork_agrees
+                        and not source_looks_like_sfx
+                        and (not source_looks_like_dialogue or latin_logo)
+                    ):
+                        unit.zh = ""
+                        unit.skip = True
+                        unit.skip_reason = "preserve" if role == "artwork" else "noise"
+                        unit.special = (
+                            "artwork_text" if role == "artwork" else "ocr_noise"
+                        )
+                    elif (
+                        not candidate
+                        and confidence >= 0.8
+                        and unit.score <= 0.55
+                        and not source_looks_like_sfx
+                    ):
+                        unit.zh = ""
+                        unit.skip = True
+                        unit.skip_reason = "noise"
+                        unit.special = "ocr_noise"
+                    continue
+                if role == "sfx":
+                    threshold = 0.68 if suspicious or unit.is_sfx else 0.84
                     if confidence >= threshold:
+                        original_ja = unit.ja
+                        agrees = prefer_semantic_ocr(unit.ja, candidate, confidence)
+                        core = repeated_sfx_core(unit.ja)
+                        candidate_fit = _area(unit.bbox) / max(
+                            1,
+                            len(
+                                re.sub(
+                                    r"[\s．。…、，,!?！？:：♡♥〰〜～]",
+                                    "",
+                                    candidate,
+                                )
+                            ),
+                        )
+                        candidate_is_sfx = semantic_sfx_classification(
+                            candidate, confidence, True
+                        )
+                        if (
+                            confidence >= 0.9
+                            and not candidate_is_sfx
+                            and JP_RE.search(candidate)
+                            and candidate_fit >= 250
+                        ):
+                            unit.ja = candidate
+                            unit.score = max(unit.score, round(confidence, 4))
+                            unit.is_sfx = False
+                            unit.special = "semantic_dialogue"
+                            if unit.skip_reason in {"duplicate", "noise", "preserve"}:
+                                unit.skip = False
+                                unit.skip_reason = ""
+                            continue
+                        if core:
+                            unit.ja = core
+                        elif (
+                            confidence >= max(0.82, threshold)
+                            and JP_RE.search(candidate)
+                            and candidate_fit >= 250
+                            and (not unit.is_sfx or agrees)
+                            and (
+                                unit.is_sfx
+                                or likely_sfx_text(candidate)
+                                or bool(re.fullmatch(r"[ァ-ヺーッ♡♥♪]+", candidate))
+                            )
+                        ):
+                            unit.ja = candidate
+                            unit.score = max(unit.score, round(confidence, 4))
+                        if unit.ja != original_ja and unit.skip_reason in {
+                            "duplicate",
+                            "noise",
+                            "preserve",
+                        }:
+                            unit.skip = False
+                            unit.skip_reason = ""
+                            if unit.special in {
+                                "ocr_duplicate",
+                                "ocr_noise",
+                                "artwork_text",
+                            }:
+                                unit.special = ""
                         unit.is_sfx = True
+                        effect_kind = str(item.get("effect_kind", "none")).lower()
+                        if effect_kind in SFX_KINDS and effect_kind != "none":
+                            unit.special = f"sfx:{effect_kind}"
                     continue
                 if role not in {"dialogue", "narration"} or confidence < 0.82:
                     continue
@@ -1209,18 +1999,61 @@ role 选择 dialogue（对白）、narration（旁白）、sfx（拟声/效果�
                 # Tight-crop text may replace the detector recognizer only when
                 # the old geometry/text contract is already suspect, or when it
                 # recovers a region previously classified as an effect.
-                if suspicious or unit.is_sfx:
+                candidate_fit = _area(unit.bbox) / max(
+                    1,
+                    len(re.sub(r"[\s．。…、，,!?！？:：♡♥〰〜～]", "", candidate)),
+                )
+                current_length = len(
+                    re.sub(r"[\s．。…、，,!?！？:：♡♥〰〜～]", "", unit.ja)
+                )
+                candidate_length = len(
+                    re.sub(r"[\s．。…、，,!?！？:：♡♥〰〜～]", "", candidate)
+                )
+                if (
+                    confidence >= 0.9
+                    and candidate_fit >= 250
+                    and candidate_length >= current_length * 0.72
+                ):
                     unit.ja = candidate
                     unit.score = max(unit.score, round(confidence, 4))
                     unit.is_sfx = False
+                if confidence >= 0.88:
+                    if unit.special in {"artwork_text", "ocr_noise"}:
+                        unit.skip = False
+                        unit.skip_reason = ""
+                    if not cover_title:
+                        unit.special = "semantic_dialogue"
         for unit in page.units:
-            if (
+            if unit.special == "cover_title":
+                unit.is_sfx = False
+                unit.skip = False
+                unit.skip_reason = ""
+                continue
+            unit.is_sfx = semantic_sfx_classification(unit.ja, unit.score, unit.is_sfx)
+            if not unit.is_sfx and unit.special.startswith("sfx:"):
+                unit.special = ""
+            if oversized_text_region(page, unit):
+                unit.zh = ""
+                unit.skip = True
+                unit.skip_reason = "preserve"
+                unit.special = "artwork_text"
+                continue
+            if oversized_decorative_sfx(page, unit):
+                unit.zh = ""
+                unit.skip = True
+                unit.skip_reason = "decorative"
+                unit.special = "decorative_sfx"
+                continue
+            if unit.special != "semantic_dialogue" and (
                 tiny_low_confidence_nontext(page, unit)
                 or malformed_tiny_ocr(page, unit)
                 or duplicate_tiny_fragment(page, unit)
             ):
-                unit.is_sfx = True
-                unit.special = unit.special or "ocr_duplicate"
+                duplicate = duplicate_tiny_fragment(page, unit)
+                unit.zh = ""
+                unit.skip = True
+                unit.skip_reason = "duplicate" if duplicate else "noise"
+                unit.special = "ocr_duplicate" if duplicate else "ocr_noise"
         return page
 
     @staticmethod
@@ -1243,7 +2076,9 @@ role 选择 dialogue（对白）、narration（旁白）、sfx（拟声/效果�
         unresolved = []
         for item in missing:
             text = normalized_text(str(item.get("text", "")))
-            if text and text in known_text:
+            if text and any(
+                text == known or text in known or known in text for known in known_text
+            ):
                 continue
             try:
                 raw = [int(value) for value in item["bbox"]]
@@ -1259,6 +2094,14 @@ role 选择 dialogue（对白）、narration（旁白）、sfx（拟声/效果�
                 round(raw[2] * page.width / 1000),
                 round(raw[3] * page.height / 1000),
             ]
+            if bool(item.get("is_sfx", False)) and any(
+                oversized_decorative_sfx(page, unit)
+                and _axis_overlap(box[0], box[2], unit.bbox[0], unit.bbox[2])
+                * _axis_overlap(box[1], box[3], unit.bbox[1], unit.bbox[3])
+                >= _area(box) * 0.8
+                for unit in page.units
+            ):
+                continue
             covered = any(
                 _axis_overlap(box[0], box[2], known[0], known[2])
                 * _axis_overlap(box[1], box[3], known[1], known[3])
@@ -1306,7 +2149,16 @@ class HybridMangaOCR:
     def analyze(self, image_path: Path, page_number: int) -> PageOCR:
         page = self.geometry.analyze(image_path, page_number)
         if page.units:
-            page, self.last_missing = self.semantics.refine(image_path, page)
+            page, first_missing = self.semantics.refine(image_path, page)
+            if getattr(self, "profile", "quality") == "quality" and hasattr(
+                self.semantics, "find_missing"
+            ):
+                second_missing = self.semantics.find_missing(image_path, page)
+            elif getattr(self, "profile", "quality") == "quality":
+                page, second_missing = self.semantics.refine(image_path, page)
+            else:
+                second_missing = []
+            self.last_missing = merge_semantic_missing(first_missing, second_missing)
         else:
             # An empty exact-detector result is not evidence that a page has no
             # text. Use full-page vision only to propose recovery crops; raw VLM
@@ -1314,16 +2166,28 @@ class HybridMangaOCR:
             coarse = self.semantics.analyze(image_path, page_number)
             self.last_missing = self._coarse_page_as_missing(coarse)
         if self.last_missing:
-            page = self.geometry.recover_missing(image_path, page, self.last_missing)
+            # Remove exact textual/geometry coverage before invoking expensive
+            # regional recovery. Full-page VLMs often repeat one long vertical
+            # line as several shorter "missing" fragments.
+            pending_missing = self.semantics.filter_covered_missing(
+                page, list(self.last_missing)
+            )
+            page = self.geometry.recover_missing(image_path, page, pending_missing)
             if page.units:
-                page, self.last_missing = self.semantics.refine(image_path, page)
+                # Recovery already requires detector-owned geometry plus an
+                # independent MangaOCR read. Repeating the full-page VLM here
+                # added minutes per page and could reintroduce stale omissions.
                 self.last_missing = self.semantics.filter_covered_missing(
-                    page, self.last_missing
+                    page, pending_missing
                 )
+        page = prune_nested_duplicate_units(page)
         if getattr(self, "profile", "quality") == "quality" and hasattr(
             self.semantics, "refine_local_crops"
         ):
             page = self.semantics.refine_local_crops(image_path, page)
+            self.last_missing = self.semantics.filter_covered_missing(
+                page, self.last_missing
+            )
         page.semantic_missing = list(self.last_missing)
         return page
 

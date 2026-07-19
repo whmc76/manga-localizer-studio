@@ -25,6 +25,16 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--model", default=DEFAULT_LOCAL_TRANSLATION_MODEL)
     parser.add_argument("--target", default="简体中文")
     parser.add_argument("--context-review", action="store_true")
+    parser.add_argument(
+        "--refresh-inferred-names",
+        action="store_true",
+        help="Re-resolve recurring katakana names and migrate existing translations.",
+    )
+    parser.add_argument(
+        "--glossary-only",
+        action="store_true",
+        help="Save glossary/name migrations without running residual retranslation.",
+    )
     return parser.parse_args()
 
 
@@ -50,7 +60,31 @@ def main() -> None:
         JapaneseNameDictionary(paths.cache),
     )
     auditor.translation_register = auditor._detect_translation_register(pages)
+    previous_names = {
+        source: target
+        for source, target in glossary.items()
+        if source in auditor._recurring_katakana_names(pages)
+    }
+    if args.refresh_inferred_names:
+        glossary = {
+            source: target
+            for source, target in glossary.items()
+            if source not in previous_names
+        }
     glossary = auditor._resolve_glossary(pages, glossary)
+    if args.refresh_inferred_names:
+        for source, old_target in previous_names.items():
+            new_target = glossary.get(source, old_target)
+            if not old_target or old_target == new_target:
+                continue
+            for page in pages:
+                for unit in page.units:
+                    if old_target in unit.zh:
+                        unit.zh = unit.zh.replace(old_target, new_target)
+                    unit.translation_attempts = [
+                        attempt.replace(old_target, new_target)
+                        for attempt in unit.translation_attempts
+                    ]
     auditor._restore_named_dialogue_roles(pages)
     auditor.resolved_glossary = dict(glossary)
 
@@ -67,6 +101,10 @@ def main() -> None:
         temporary.replace(args.output)
 
     try:
+        if args.glossary_only:
+            save()
+            print(f"wrote {args.output}", flush=True)
+            return
         if args.context_review:
             auditor.review_pages(
                 pages,

@@ -37,7 +37,7 @@ from .translator import (
 
 
 ProgressCallback = Callable[[str, int, int, str], None]
-OCR_CACHE_VERSION = 4
+OCR_CACHE_VERSION = 7
 
 
 def unsafe_semantic_missing(page: PageOCR, preserve_sfx: bool) -> list[dict]:
@@ -73,7 +73,7 @@ class PipelineRequest:
     target_language: str = "简体中文"
     story_context: bool = True
     context_pages: int = 6
-    preserve_sfx: bool = True
+    preserve_sfx: bool = False
     quality_profile: str = "quality"
     output_format: str = "webp"
     device: str = "auto"

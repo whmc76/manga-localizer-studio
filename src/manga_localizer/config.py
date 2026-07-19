@@ -40,7 +40,7 @@ class UserSettings:
     target_language: str = "简体中文"
     story_context: bool = True
     context_pages: int = 6
-    preserve_sfx: bool = True
+    preserve_sfx: bool = False
     quality_profile: str = "quality"
     output_format: str = "webp"
     prefer_modelscope: bool = True

@@ -35,7 +35,7 @@ class SettingsPayload(BaseModel):
     target_language: str = "简体中文"
     story_context: bool = True
     context_pages: int = Field(6, ge=0, le=12)
-    preserve_sfx: bool = True
+    preserve_sfx: bool = False
     quality_profile: Literal["quality", "fast"] = "quality"
     output_format: Literal["webp", "png"] = "webp"
     prefer_modelscope: bool = True

@@ -94,7 +94,7 @@ def run_pipeline(
     target_language: str = typer.Option("简体中文", "--target"),
     context_pages: int = typer.Option(6, min=0, max=12),
     story_context: bool = typer.Option(True, "--story-context/--no-story-context"),
-    preserve_sfx: bool = typer.Option(True, "--preserve-sfx/--translate-sfx"),
+    preserve_sfx: bool = typer.Option(False, "--preserve-sfx/--translate-sfx"),
     quality_profile: str = typer.Option("quality", "--quality-profile"),
     output_format: str = typer.Option("webp", "--output-format"),
     reviewed_transcript: Path | None = typer.Option(

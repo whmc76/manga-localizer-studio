@@ -23,11 +23,16 @@ class NameCandidate:
 
     @property
     def is_male(self) -> bool:
-        return any("male given" in item for item in self.types)
+        # ``female`` contains the substring ``male``.  Match the JMnedict type
+        # boundary instead of accidentally marking every female name as male.
+        return any(
+            "male given" in item.lower() and "female given" not in item.lower()
+            for item in self.types
+        )
 
     @property
     def is_female(self) -> bool:
-        return any("female given" in item for item in self.types)
+        return any("female given" in item.lower() for item in self.types)
 
 
 def katakana_to_hiragana(text: str) -> str:

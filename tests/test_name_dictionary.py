@@ -28,3 +28,4 @@ def test_name_dictionary_returns_only_short_given_name_candidates(tmp_path):
     assert result["ガク"][0].is_male is True
     assert [item.written for item in result["サナ"]] == ["紗奈"]
     assert result["サナ"][0].is_female is True
+    assert result["サナ"][0].is_male is False

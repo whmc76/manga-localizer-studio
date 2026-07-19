@@ -1,5 +1,22 @@
 # Changelog
 
+## 0.5.2 - 2026-07-20
+
+- Keep full-page 9B vision results audit-only unless their text agrees with the detector-owned region, preventing neighbouring numbered boxes from swapping dialogue.
+- Add exact one-crop-per-unit 9B role auditing for dialogue, sound effects, artwork text, and noise; Japanese grammar can override a wrong VLM role label.
+- Preserve clothing prints, logos, props, and implausibly oversized detector regions instead of allowing them into destructive cleanup.
+- Reject nested recovery duplicates both within a missing-text recovery batch and across final effect units, while allowing strong exact-crop evidence to recover an automatically skipped effect.
+- Add a general Japanese manga SFX layer for common heartbeat, rumble, impact, mechanical, vocal, movement, and wet-sound families; use the 9B model only for unknown effects and never as geometry authority.
+- Translate sound effects by default in the CLI, API, UI defaults, and pipeline while retaining the explicit preserve option.
+- Fix JMnedict female-name classification and expand natural simplified-Chinese candidate ranking so recurring names resolve automatically without title-specific name tables.
+- Remove detached orthogonal scene/artwork boxes from legacy erase groups and constrain LaMa cleanup to the remaining detector-owned text geometry.
+- Treat full-page VLM omissions as evidence rather than geometry, collapse substring/containment echoes against known OCR, and re-detect only the remaining local crops.
+- Preserve page-spanning decorative sound effects instead of generating destructive cleanup masks; ordinary detector-confirmed dialogue and effects remain translatable.
+- Refresh inferred recurring names through natural Chinese-name candidate filtering and migrate existing transcript references without any title-specific cast table.
+- Prefer high-confidence Latin logo evidence over conflicting low-confidence Japanese crop hallucinations, protecting garment and prop lettering during legacy transcript audits.
+- Remove the redundant second full-page VLM recovery pass after local crop verification to reduce quality-mode latency.
+- Invalidate earlier OCR caches because the semantic role and recovery contracts changed.
+
 ## 0.5.1 - 2026-07-19
 
 - Remove thick contrasting source outlines as part of the LaMa mask instead of selecting only the dark glyph core, eliminating white silhouettes behind translated text.

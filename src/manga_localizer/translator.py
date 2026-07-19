@@ -16,6 +16,7 @@ from opencc import OpenCC
 from .model_manager import ModelDependencyError
 from .name_dictionary import JapaneseNameDictionary, NameCandidate
 from .ocr import PageOCR, TextUnit
+from .sfx import lookup_sfx
 
 
 LINE_RE = re.compile(r"^\s*\[([^\]]+)\]\s*(.+?)\s*$")
@@ -284,15 +285,36 @@ class PromptTranslator:
         """Apply one semantic acceptance contract at every model boundary."""
         return (
             self._valid_translation(unit, candidate)
+            and (not unit.is_sfx or self._valid_sfx_translation(unit, candidate))
             and self._respects_glossary(unit, candidate, glossary)
             and self._preserves_audit_information(unit, candidate)
         )
+
+    @staticmethod
+    def _valid_sfx_translation(unit: TextUnit, candidate: str) -> bool:
+        """Reject contextual dialogue hallucinated into a confirmed effect."""
+        source = re.sub(r"[^ぁ-ゖァ-ヺー]", "", unit.ja)
+        proposed = re.sub(r"[^\u3400-\u9fffA-Za-z0-9]", "", candidate)
+        dialogue_leak = bool(
+            re.search(
+                r"[?？]|(?:我|你|他|她|它|我们|你们|他们|她们|什么|莫非|"
+                r"喜欢|兴趣|事情|怎么|为何|是不是|有没有|吗|呢|吧)",
+                candidate,
+            )
+        )
+        maximum = min(12, max(4, len(source)))
+        return bool(proposed) and len(proposed) <= maximum and not dialogue_leak
 
     @staticmethod
     def _preserves_audit_information(unit: TextUnit, candidate: str) -> bool:
         """Reject summaries, truncated clauses, and lost source negation."""
         source = re.sub(r"[\s.．。…、，,!?！？:：♡♥〰〜～]", "", unit.ja)
         proposed = re.sub(r"[\s。…、，,!?！？:：♡♥〰〜～]", "", candidate)
+        if unit.is_sfx:
+            # Japanese effects are often long repeated strings while natural
+            # Chinese uses one or two compact sound words. Do not apply prose
+            # information-density ratios to confirmed SFX.
+            return bool(proposed) and len(proposed) <= max(12, len(source) * 2)
         source_is_question = bool(
             re.search(r"[?？]", unit.ja)
             or re.search(r"(?:のかよ|なのか)[!！…．.]*$", unit.ja.strip())
@@ -520,26 +542,43 @@ class PromptTranslator:
             for name in KATAKANA_TOKEN_RE.findall(text)
         )
 
-        def score(candidate: NameCandidate) -> tuple[int, int, int]:
+        def score(candidate: NameCandidate) -> tuple[int, int, int, int]:
             gender = (
                 2
                 if male_hint and candidate.is_male
+                else 2
+                if not male_hint and candidate.is_female
                 else 1
                 if candidate.is_given_name
                 else 0
             )
             preferred_length = 1 if male_hint else 2
+            simplified = OpenCC("t2s").convert(candidate.written)
             return (
                 gender,
                 -abs(len(candidate.written) - preferred_length),
-                -sum(ord(char) > 0x9FA5 for char in candidate.written),
+                -sum(ord(char) > 0x9FA5 for char in simplified),
+                -sum(char in "那此彼其之于兮" for char in simplified),
             )
 
-        return sorted(
+        ranked = sorted(
             (candidate for candidate in candidates if candidate.is_given_name),
             key=score,
             reverse=True,
-        )[:32]
+        )
+        # When the dictionary offers natural alternatives, do not expose
+        # Chinese demonstrative/function-character transliterations to the LLM.
+        # They are valid phonetic spellings in isolation but read like ordinary
+        # words rather than a person's name in Simplified Chinese.
+        natural = [
+            candidate
+            for candidate in ranked
+            if not any(
+                char in "那此彼其之于兮"
+                for char in OpenCC("t2s").convert(candidate.written)
+            )
+        ]
+        return (natural or ranked)[:96]
 
     def _choose_name_candidate(
         self, name: str, candidates: list[NameCandidate], context: list[str]
@@ -548,11 +587,12 @@ class PromptTranslator:
         if not ranked:
             return ""
         options = " ".join(
-            f"{index}.{candidate.written}"
+            f"{index}.{OpenCC('t2s').convert(candidate.written)}"
+            f"（{'女性名' if candidate.is_female else '男性名' if candidate.is_male else '姓名'}）"
             for index, candidate in enumerate(ranked, start=1)
         )
         prompt = f"""判断片假名【{name}】在上下文中是否是人物名；若不是人物名，只输出0。
-若是人物名，为简体中文漫画选择最自然的日文汉字写法。优先让中文读者一眼看出是姓名，避免普通词歧义、罕见字、地名或生硬音译。
+若是人物名，为简体中文漫画选择最自然的姓名写法。候选已经转换为简体；结合性别标签和上下文，优先让中文读者一眼看出是自然姓名，避免指示词、普通词歧义、罕见字、地名或生硬音译。
 只能输出候选编号或0。候选：{options}
 上下文：{"；".join(context)}
 只输出候选前的一个数字，不要解释。"""
@@ -645,7 +685,7 @@ class PromptTranslator:
             for page in chunk:
                 source_rows.append(f"--- 第{page.page}页 ---")
                 source_rows.extend(
-                    f"[{unit.id}] {unit.ja}"
+                    f"[{unit.id}]{'[拟声词]' if unit.is_sfx else ''} {unit.ja}"
                     for unit in page.units
                     if self._needs_translation(unit, preserve_sfx)
                 )
@@ -660,6 +700,7 @@ class PromptTranslator:
 
 【任务】
 逐条翻译为{self.target_language}，风格必须是：{self.translation_register}，适合直接放进漫画气泡。
+标记为[拟声词]的项目要译成简短自然的中文拟声词，按画面语境保留节奏、重复和强弱；不得机械音译成无意义汉字。
 以自然中文和故事连贯为先；只补足当前原文语法成立所必需的省略主语，不得添加原文没有的情绪、评价、动作或口头禅。上下文不得补写进当前行，相邻单元不要重复同一信息。
 严格保留每行开头的[id]，一条输入对应一条输出，不合并、不遗漏。只输出[id]和译文。
 
@@ -705,6 +746,8 @@ class PromptTranslator:
         glossary: dict[str, str] | None = None,
     ) -> str:
         glossary = glossary or {}
+        if unit.is_sfx:
+            return self._translate_sfx(unit, glossary)
         deterministic = self._normalize_translation(calm_preference_fallback(unit.ja))
         if self._candidate_is_acceptable(unit, deterministic, glossary):
             unit.translation_attempts.append(deterministic)
@@ -776,6 +819,58 @@ class PromptTranslator:
             unit.translation_attempts.append(fallback)
         if self._candidate_is_acceptable(unit, fallback, glossary):
             return fallback
+        return ""
+
+    def _translate_sfx(self, unit: TextUnit, glossary: dict[str, str]) -> str:
+        """Translate one confirmed effect without leaking story context into it."""
+        source = unit.ja.strip()
+        semantic = re.sub(r"[^ぁ-ゖァ-ヺー]", "", source)
+        if not semantic:
+            return ""
+        lexical = lookup_sfx(source)
+        if lexical is not None:
+            unit.translation_attempts.append(lexical.chinese)
+            if self._candidate_is_acceptable(unit, lexical.chinese, glossary):
+                return lexical.chinese
+        limit = min(12, max(4, len(semantic)))
+        visual_kind = (
+            unit.special.removeprefix("sfx:")
+            if unit.special.startswith("sfx:")
+            else "unknown"
+        )
+        draft_prompt = f"""把下面的日语漫画拟声词译成自然简体中文拟声词。
+只表达声音、心跳、撞击、动作节奏或短促叫声；保留原文重复和强弱。
+禁止补人物、对白、原因、感情解释或剧情；禁止机械音译。
+只输出一个不超过 {limit} 个汉字的拟声词，可带必要的！、～或省略号。
+视觉复核类别：{visual_kind}
+【拟声词】{source}"""
+        draft = self._normalize_translation(
+            self._first_line(
+                self._generate_repair(
+                    draft_prompt, max_new_tokens=max(24, min(64, limit * 3))
+                )
+            )
+        )
+        unit.translation_attempts.append(draft)
+        review_prompt = f"""审校一个日语漫画效果字的中文草稿。
+先判断原文是心跳、撞击、摩擦、引擎、动作节奏还是短促人声，再纠正草稿。
+严禁按日语读音拼成无意义汉字；短促人声不能误写成相机、机械或撞击声。
+严禁加入人物、对白或剧情。保留重复和强弱，只输出不超过 {limit} 个汉字的最终中文声效，不解释。
+【日文效果字】{source}
+【视觉复核类别】{visual_kind}
+【草稿】{draft or "空"}"""
+        reviewed = self._normalize_translation(
+            self._first_line(
+                self._generate_repair(
+                    review_prompt, max_new_tokens=max(24, min(64, limit * 3))
+                )
+            )
+        )
+        unit.translation_attempts.append(reviewed)
+        if self._candidate_is_acceptable(unit, reviewed, glossary):
+            return reviewed
+        if self._candidate_is_acceptable(unit, draft, glossary):
+            return draft
         return ""
 
 

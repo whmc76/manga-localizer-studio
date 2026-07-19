@@ -457,6 +457,102 @@ def test_inferred_recurring_name_recovers_speech_mislabeled_as_sfx():
     assert duplicate.is_sfx is True
 
 
+def test_name_selector_receives_full_simplified_gender_labeled_candidates():
+    class NameChoiceTranslator(PromptTranslator):
+        def _generate(self, prompt, max_new_tokens=1600):
+            del max_new_tokens
+            options = dict(
+                (name, number)
+                for number, name in translator.re.findall(
+                    r"(\d+)\.([\u3400-\u9fff]+)（", prompt
+                )
+            )
+            return options["纱奈"]
+
+    candidates = [
+        NameCandidate(f"佐{chr(0x4E00 + index)}", ("female given name or forename",))
+        for index in range(40)
+    ] + [NameCandidate("紗奈", ("female given name or forename",))]
+    service = NameChoiceTranslator()
+    assert (
+        service._choose_name_candidate("サナ", candidates, ["サナはいつも"]) == "纱奈"
+    )
+
+
+def test_name_selector_excludes_demonstrative_looking_spelling_when_natural_exists():
+    class FirstChoiceTranslator(PromptTranslator):
+        def _generate(self, prompt, max_new_tokens=1600):
+            del prompt, max_new_tokens
+            return "1"
+
+    candidates = [
+        NameCandidate("沙那", ("female given name or forename",)),
+        NameCandidate("紗奈", ("female given name or forename",)),
+    ]
+    service = FirstChoiceTranslator()
+
+    assert (
+        service._choose_name_candidate("サナ", candidates, ["サナはいつも"]) == "纱奈"
+    )
+
+
+def test_confirmed_sfx_accepts_compact_natural_translation():
+    unit = TextUnit(
+        "p001u01",
+        [0, 0, 100, 100],
+        [0, 0, 100, 100],
+        "ドドドドドドドド",
+        1.0,
+        is_sfx=True,
+    )
+    assert PromptTranslator._preserves_audit_information(unit, "轰隆隆") is True
+    assert PromptTranslator()._candidate_is_acceptable(unit, "轰隆隆", {}) is True
+    assert (
+        PromptTranslator()._candidate_is_acceptable(unit, "莫非你也对我感兴趣？", {})
+        is False
+    )
+
+
+def test_sfx_retry_uses_context_free_effect_prompt():
+    class EffectTranslator(PromptTranslator):
+        def _generate(self, prompt, max_new_tokens=1600):
+            del max_new_tokens
+            return "巴肯！" if "把下面" in prompt else "怦咚"
+
+    unit = TextUnit(
+        "p001u01",
+        [0, 0, 100, 100],
+        [0, 0, 100, 100],
+        "ドキン",
+        1.0,
+        is_sfx=True,
+    )
+    service = EffectTranslator()
+    assert service._translate_one(unit, [], "无", {}) == "怦咚"
+    assert unit.translation_attempts == ["怦咚"]
+
+
+def test_common_sfx_families_use_deterministic_manga_wording():
+    service = PromptTranslator()
+    cases = {
+        "ドキン": "怦咚",
+        "バクン\nバクン\nバクンッ": "怦咚怦咚怦咚！",
+        "キャッ": "呀！",
+        "ドドドドド": "轰隆隆",
+        "ゴッ": "咚！",
+    }
+    for source, expected in cases.items():
+        unit = TextUnit(
+            "p001u01",
+            [0, 0, 100, 100],
+            [0, 0, 100, 100],
+            source,
+            1.0,
+            is_sfx=True,
+        )
+        assert service._translate_one(unit, [], "无", {}) == expected
+
+
 def test_adult_register_prevents_euphemism_from_becoming_generic_action():
     pages = [
         PageOCR(

@@ -230,6 +230,45 @@ def test_textured_outlined_cleanup_includes_source_stroke_halo(tmp_path):
     assert np.array_equal(rendered[:, 225:], image[:, 225:])
 
 
+def test_renderer_preserves_detached_garment_logo_from_legacy_group(tmp_path):
+    class MaskPaintingInpainter:
+        def __call__(self, crop, mask):
+            result = crop.copy()
+            result[mask > 0] = (255, 0, 255)
+            return result
+
+    source = tmp_path / "garment-logo.png"
+    image = np.full((800, 600, 3), 180, dtype=np.uint8)
+    Image.fromarray(image).save(source)
+    unit = TextUnit(
+        "mixed",
+        [10, 200, 580, 700],
+        [0, 180, 590, 720],
+        "おっぱいデカくね!?",
+        0.94,
+        False,
+        "胸是不是变大了！？",
+        erase_boxes=[
+            [20, 330, 80, 680],
+            [70, 340, 130, 620],
+            [150, 200, 580, 430],
+        ],
+    )
+    page = PageOCR(1, source.name, 600, 800, [unit])
+    renderer = ArtworkPreservingRenderer(
+        cleanup_profile="quality", inpainter=MaskPaintingInpainter()
+    )
+    renderer._draw = lambda *_args, **_kwargs: None
+    renderer._analyze_style = lambda *_args: TextStyle(
+        180, 0.2, "black", "white", 0.066, True, 80, True, True, 24, True
+    )
+    output = tmp_path / "garment-logo-output.png"
+    renderer.render_page(source, page, output)
+    rendered = np.asarray(Image.open(output).convert("RGB"))
+    assert np.all(rendered[360:590, 30:120] == (255, 0, 255))
+    assert np.array_equal(rendered[200:430, 180:560], image[200:430, 180:560])
+
+
 def test_grouped_column_width_is_an_upper_bound_for_font_size():
     rgb = np.full((700, 500, 3), 210, dtype=np.uint8)
     for x in (70, 300):

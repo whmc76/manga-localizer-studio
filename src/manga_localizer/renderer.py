@@ -3,6 +3,7 @@ from __future__ import annotations
 import json
 import math
 import os
+from copy import deepcopy
 from dataclasses import dataclass
 from pathlib import Path
 from urllib.request import Request, urlopen
@@ -14,7 +15,7 @@ from PIL import Image, ImageDraw, ImageFont
 from .config import AppPaths
 from .inpainting import LaMaInpainter
 from .model_manager import ModelManager
-from .ocr import PageOCR, TextUnit
+from .ocr import PageOCR, TextUnit, prune_detached_orthogonal_outliers
 
 
 FONT_URL = (
@@ -597,9 +598,34 @@ class ArtworkPreservingRenderer:
         rgb = original.copy()
         styles: dict[str, TextStyle] = {}
         active = []
-        for unit in page.units:
-            if unit.skip or not unit.zh or (preserve_sfx and unit.is_sfx):
+        for source_unit in page.units:
+            if (
+                source_unit.skip
+                or not source_unit.zh
+                or (preserve_sfx and source_unit.is_sfx)
+            ):
                 continue
+            unit = deepcopy(source_unit)
+            source_boxes = unit.erase_boxes or [unit.bbox]
+            safe_boxes = prune_detached_orthogonal_outliers(source_boxes)
+            if safe_boxes != source_boxes:
+                unit.erase_boxes = safe_boxes
+                unit.bbox = [
+                    min(box[0] for box in safe_boxes),
+                    min(box[1] for box in safe_boxes),
+                    max(box[2] for box in safe_boxes),
+                    max(box[3] for box in safe_boxes),
+                ]
+                width = unit.bbox[2] - unit.bbox[0]
+                height = unit.bbox[3] - unit.bbox[1]
+                pad_x = max(10, round(width * 0.04))
+                pad_y = max(10, round(height * 0.03))
+                unit.crop_bbox = [
+                    max(0, unit.bbox[0] - pad_x),
+                    max(0, unit.bbox[1] - pad_y),
+                    min(page.width, unit.bbox[2] + pad_x),
+                    min(page.height, unit.bbox[3] + pad_y),
+                ]
             x0, y0, x1, y1 = unit.bbox
             unit.bbox = [
                 max(0, min(page.width, x0)),
