@@ -626,11 +626,12 @@ wheels = [
 
 [[package]]
 name = "manga-localizer-studio"
-version = "0.4.5"
+version = "0.5.2"
 source = { editable = "." }
 dependencies = [
     { name = "fastapi" },
     { name = "numpy" },
+    { name = "opencc-python-reimplemented" },
     { name = "opencv-python-headless" },
     { name = "pillow" },
     { name = "pydantic" },
@@ -665,6 +666,7 @@ requires-dist = [
     { name = "manga-ocr", marker = "extra == 'ml'", specifier = ">=0.1.15,<1" },
     { name = "modelscope", marker = "extra == 'ml'", specifier = ">=1.31,<2" },
     { name = "numpy", specifier = ">=1.26,<3" },
+    { name = "opencc-python-reimplemented", specifier = ">=0.1.7,<1" },
     { name = "opencv-python-headless", specifier = ">=4.10,<5" },
     { name = "paddleocr", marker = "extra == 'ml'", specifier = ">=3.3,<4" },
     { name = "paddlepaddle", marker = "extra == 'ml'", specifier = ">=3.3,<4" },
@@ -1011,6 +1013,15 @@ version = "12.8.90"
 source = { registry = "https://pypi.org/simple" }
 wheels = [
     { url = "https://files.pythonhosted.org/packages/a2/eb/86626c1bbc2edb86323022371c39aa48df6fd8b0a1647bc274577f72e90b/nvidia_nvtx_cu12-12.8.90-py3-none-manylinux2014_x86_64.manylinux_2_17_x86_64.whl", hash = "sha256:5b17e2001cc0d751a5bc2c6ec6d26ad95913324a4adb86788c944f8ce9ba441f", size = 89954, upload-time = "2025-03-07T01:42:44.131Z" },
+]
+
+[[package]]
+name = "opencc-python-reimplemented"
+version = "0.1.7"
+source = { registry = "https://pypi.org/simple" }
+sdist = { url = "https://files.pythonhosted.org/packages/8d/6d/c6f37eed651dd6b752e50f80a93396cdaa42a6acc6ce05ad7452303ea511/opencc-python-reimplemented-0.1.7.tar.gz", hash = "sha256:4f777ea3461a25257a7b876112cfa90bb6acabc6dfb843bf4d11266e43579dee", size = 482566, upload-time = "2023-02-11T03:58:42.25Z" }
+wheels = [
+    { url = "https://files.pythonhosted.org/packages/30/6b/055b7806f320cc8f2cdf23c5f70221c0dc1683fca9ffaf76dfc2ad4b91b6/opencc_python_reimplemented-0.1.7-py2.py3-none-any.whl", hash = "sha256:41b3b92943c7bed291f448e9c7fad4b577c8c2eae30fcfe5a74edf8818493aa6", size = 481813, upload-time = "2023-02-11T03:58:39.66Z" },
 ]
 
 [[package]]

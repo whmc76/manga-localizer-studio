@@ -1,6 +1,6 @@
 # UI parity ledger
 
-Verified 2026-07-18 with the real FastAPI application at 1536×1024 and 390×844.
+Verified 2026-07-19 with the real FastAPI application at 1536×1024 and 390×844.
 Evidence artifacts: `docs/screenshots/app-desktop.png` and `docs/screenshots/app-mobile.png`.
 
 | # | Design requirement | Initial implementation | Required action | Evidence selector/check | Status |
@@ -14,9 +14,9 @@ Evidence artifacts: `docs/screenshots/app-desktop.png` and `docs/screenshots/app
 | 7 | Exactly four pipeline steps | implemented | verify | `.pipeline-step` count 4 | PASS |
 | 8 | Pipeline reflects live job phase | implemented | simulate persisted phases | detect/OCR/translate/render activated in order | PASS |
 | 9 | Preview has 原图/译文/对比 controls | implemented | verify | `[data-preview]` count 3 | PASS |
-| 10 | Compare mode is a split pane, not cards | implemented | verify | two `.preview-pane` figures | PASS |
-| 11 | Page navigation uses real page count | implemented | verify boundaries | both buttons disabled at 0/0; runtime bounds wired | PASS |
-| 12 | One model row per registry entry | implemented | compare API and DOM | 3 API models; 3 `.model-row` elements | PASS |
+| 10 | Compare mode is a split pane, not cards | implemented | verify | two `.preview-pane` figures; both real images loaded at 2126×3661 | PASS |
+| 11 | Page navigation uses real page count | implemented | verify boundaries | completed job displayed 1/125; previous disabled and next enabled | PASS |
+| 12 | One model row per registry entry | implemented | compare API and DOM | 4 API models; 4 `.model-row` elements | PASS |
 | 13 | Model rows show downloading/ready/error | implemented | verify data rendering | chips render API/task state; no fake ready state | PASS |
 | 14 | Model refresh is wired | implemented | verify handler | click calls `/api/models?refresh=true` | PASS |
 | 15 | Model bootstrap button/action is real | implemented | verify task endpoint | POST task plus task-status polling | PASS |
@@ -28,9 +28,9 @@ Evidence artifacts: `docs/screenshots/app-desktop.png` and `docs/screenshots/app
 | 21 | Execution status with phase and progress | implemented | verify persisted job | API-driven progress 0–100 and current/total | PASS |
 | 22 | Pause control is real or explicitly disabled | implemented | verify semantics | disabled with explanatory title | PASS |
 | 23 | Empty/loading/error states use real data | implemented | verify initial app | missing models and empty history shown from API | PASS |
-| 24 | No horizontal overflow | implemented | measure both viewports | 1536=1536 and 390=390 scroll/client widths | PASS |
-| 25 | First desktop viewport matches module density | implemented | visual comparison | actual 1536×1024 screenshot reviewed | PASS |
-| 26 | Mobile inspector precedes preview | implemented | measure layout | inspector top 474px; preview top 1057px | PASS |
+| 24 | No horizontal overflow | implemented | measure both viewports | desktop 1521=1521 and mobile 375=375 scroll/client widths after scrollbar | PASS |
+| 25 | First desktop viewport matches module density | implemented | visual comparison | actual 1536×1024 screenshot reviewed; preview canvas 736px high and uses inspector-created height | PASS |
+| 26 | Mobile inspector precedes preview | implemented | measure layout | inspector top 497px; preview top 1315px | PASS |
 | 27 | All primary controls keyboard accessible | implemented | keyboard check | native controls and visible focus; Tab reached input | PASS |
 | 28 | No old/placeholder module remains | implemented | inspect DOM | `[data-placeholder]` count 0 | PASS |
 | 29 | Inference backend selector | implemented | API + DOM contract | built-in, Ollama, and online modes persist | PASS |

@@ -19,6 +19,7 @@ from .config import AppPaths, UserSettings
 from .model_manager import MODEL_REGISTRY, ModelManager
 from .pipeline import LocalizerPipeline, PipelineRequest
 from .renderer import ensure_bold_font, ensure_font, find_bold_font, find_font
+from .translator import DEFAULT_LOCAL_TRANSLATION_MODEL
 
 
 def configure_cli_encoding(*streams) -> None:
@@ -40,7 +41,9 @@ configure_cli_encoding()
 configure_dependency_logging()
 
 
-app = typer.Typer(help="Local-first manga localization workspace.", no_args_is_help=True)
+app = typer.Typer(
+    help="Local-first manga localization workspace.", no_args_is_help=True
+)
 models_app = typer.Typer(help="Inspect and download OCR/translation models.")
 assets_app = typer.Typer(help="Inspect and download non-model runtime assets.")
 app.add_typer(models_app, name="models")
@@ -60,7 +63,9 @@ def existing_ui_url(host: str, port: int, timeout: float = 30.0) -> str:
 
 @app.command()
 def ui(
-    host: str = typer.Option("127.0.0.1", help="Bind host. Keep localhost for privacy."),
+    host: str = typer.Option(
+        "127.0.0.1", help="Bind host. Keep localhost for privacy."
+    ),
     port: int = typer.Option(8765, min=1, max=65535),
     open_browser: bool = typer.Option(True, "--open/--no-open"),
 ):
@@ -87,18 +92,22 @@ def run_pipeline(
     source: Path = typer.Argument(..., exists=True, file_okay=False),
     output: Path = typer.Option(..., "--output", "-o"),
     target_language: str = typer.Option("简体中文", "--target"),
-    context_pages: int = typer.Option(3, min=0, max=12),
+    context_pages: int = typer.Option(6, min=0, max=12),
     story_context: bool = typer.Option(True, "--story-context/--no-story-context"),
     preserve_sfx: bool = typer.Option(False, "--preserve-sfx/--translate-sfx"),
     quality_profile: str = typer.Option("quality", "--quality-profile"),
     output_format: str = typer.Option("webp", "--output-format"),
-    reviewed_transcript: Path | None = typer.Option(None, "--reviewed-transcript", exists=True),
+    reviewed_transcript: Path | None = typer.Option(
+        None, "--reviewed-transcript", exists=True
+    ),
     device: str = typer.Option("auto"),
-    inference_backend: str = typer.Option("builtin", "--backend"),
-    ocr_backend: str = typer.Option("builtin", "--ocr-backend"),
+    inference_backend: str = typer.Option("ollama", "--backend"),
+    ocr_backend: str = typer.Option("hybrid", "--ocr-backend"),
     ollama_base_url: str = typer.Option("http://127.0.0.1:11434", "--ollama-url"),
-    ollama_model: str = typer.Option("qwen2.5:7b", "--ollama-model"),
-    ollama_ocr_model: str = typer.Option("qwen2.5vl:7b", "--ollama-ocr-model"),
+    ollama_model: str = typer.Option(DEFAULT_LOCAL_TRANSLATION_MODEL, "--ollama-model"),
+    ollama_ocr_model: str = typer.Option(
+        DEFAULT_LOCAL_TRANSLATION_MODEL, "--ollama-ocr-model"
+    ),
     online_base_url: str = typer.Option("https://api.openai.com/v1", "--online-url"),
     online_model: str = typer.Option("", "--online-model"),
 ):
@@ -174,7 +183,10 @@ def _font_status(finder, paths: AppPaths) -> str:
 
 
 def torch_pair_compatible(torch_version: str, torchvision_version: str) -> bool:
-    return torch_version.split("+", 1)[0] == "2.8.0" and torchvision_version.split("+", 1)[0] == "0.23.0"
+    return (
+        torch_version.split("+", 1)[0] == "2.8.0"
+        and torchvision_version.split("+", 1)[0] == "0.23.0"
+    )
 
 
 def _ml_runtime_status() -> dict:
@@ -191,11 +203,20 @@ def _ml_runtime_status() -> dict:
             "error": "" if ready else "Expected Torch 2.8.0 with Torchvision 0.23.0",
         }
     except Exception as exc:
-        return {"ready": False, "torch": "missing", "torchvision": "missing", "error": str(exc)}
+        return {
+            "ready": False,
+            "torch": "missing",
+            "torchvision": "missing",
+            "error": str(exc),
+        }
 
 
 @app.command()
-def doctor(require_ml: bool = typer.Option(False, help="Fail if the pinned ML runtime cannot load.")):
+def doctor(
+    require_ml: bool = typer.Option(
+        False, help="Fail if the pinned ML runtime cannot load."
+    ),
+):
     """Print environment and cache diagnostics."""
     paths = AppPaths.from_env().ensure()
     settings = UserSettings.load(paths.settings)

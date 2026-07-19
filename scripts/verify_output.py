@@ -18,7 +18,9 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("output", type=Path)
     parser.add_argument("transcript", type=Path)
     parser.add_argument("--preserve-sfx", action="store_true")
-    parser.add_argument("--output-format", choices=("auto", "webp", "png"), default="auto")
+    parser.add_argument(
+        "--output-format", choices=("auto", "webp", "png"), default="auto"
+    )
     return parser.parse_args()
 
 
@@ -66,21 +68,27 @@ def main() -> None:
                 args.output / f"{source_path.stem}.png",
             ]
         )
-        output_path = next((path for path in candidates if path.exists()), candidates[0])
+        output_path = next(
+            (path for path in candidates if path.exists()), candidates[0]
+        )
         if not output_path.exists():
             failures.append(f"page {page.page}: missing {output_path.name}")
             continue
         source = np.asarray(Image.open(source_path).convert("RGB"))
         output = np.asarray(Image.open(output_path).convert("RGB"))
         if source.shape != output.shape:
-            failures.append(f"page {page.page}: dimensions {source.shape} != {output.shape}")
+            failures.append(
+                f"page {page.page}: dimensions {source.shape} != {output.shape}"
+            )
             continue
         mask = allowed_mask(page, args.preserve_sfx)
         changed = np.any(source != output, axis=2)
         outside = int(np.count_nonzero(changed & ~mask))
         outside_changes += outside
         if outside:
-            failures.append(f"page {page.page}: {outside} pixels changed outside text regions")
+            failures.append(
+                f"page {page.page}: {outside} pixels changed outside text regions"
+            )
         print(f"[{page.page:03d}/{len(pages):03d}] outside={outside}", flush=True)
     report = {
         "pages": len(pages),
@@ -92,7 +100,9 @@ def main() -> None:
         "failures": failures,
     }
     report_path = args.output / "quality_report.json"
-    report_path.write_text(json.dumps(report, ensure_ascii=False, indent=2), encoding="utf-8")
+    report_path.write_text(
+        json.dumps(report, ensure_ascii=False, indent=2), encoding="utf-8"
+    )
     print(json.dumps(report, ensure_ascii=False, indent=2))
     if failures:
         raise SystemExit(1)

@@ -6,7 +6,7 @@ from PIL import Image, ImageDraw
 
 from manga_localizer.config import AppPaths
 from manga_localizer.ocr import PageOCR, TextUnit
-from manga_localizer.renderer import ArtworkPreservingRenderer, ensure_font
+from manga_localizer.renderer import ArtworkPreservingRenderer, TextStyle, ensure_font
 
 
 class BoundedTestRenderer(ArtworkPreservingRenderer):
@@ -26,9 +26,23 @@ def test_renderer_preserves_pixels_outside_text_box(tmp_path):
     draw.rectangle((8, 8, 311, 231), outline="black", width=5)
     draw.text((120, 95), "TEST", fill="black")
     base.save(source, quality=100, subsampling=0)
-    page = PageOCR(1, source.name, 320, 240, [
-        TextUnit("p001u01", [90, 70, 235, 170], [90, 70, 235, 170], "テスト", 0.9, False, "测试")
-    ])
+    page = PageOCR(
+        1,
+        source.name,
+        320,
+        240,
+        [
+            TextUnit(
+                "p001u01",
+                [90, 70, 235, 170],
+                [90, 70, 235, 170],
+                "テスト",
+                0.9,
+                False,
+                "测试",
+            )
+        ],
+    )
     output = tmp_path / "page.png"
     BoundedTestRenderer().render_page(source, page, output)
     before = np.asarray(Image.open(source).convert("RGB"))
@@ -55,23 +69,223 @@ def test_grouped_text_erases_only_tight_detector_boxes(tmp_path):
     draw.text((45, 35), "TOP", fill="black")
     draw.text((145, 125), "BOTTOM", fill="black")
     base.save(source)
-    page = PageOCR(1, source.name, 240, 180, [
-        TextUnit(
-            "p001u01",
-            [35, 25, 215, 155],
-            [35, 25, 215, 155],
-            "テスト",
-            0.9,
-            False,
-            "测试",
-            erase_boxes=[[35, 25, 95, 65], [135, 115, 215, 155]],
-        )
-    ])
+    page = PageOCR(
+        1,
+        source.name,
+        240,
+        180,
+        [
+            TextUnit(
+                "p001u01",
+                [35, 25, 215, 155],
+                [35, 25, 215, 155],
+                "テスト",
+                0.9,
+                False,
+                "测试",
+                erase_boxes=[[35, 25, 95, 65], [135, 115, 215, 155]],
+            )
+        ],
+    )
     output = tmp_path / "grouped-output.png"
     EraseOnlyRenderer().render_page(source, page, output)
     before = np.asarray(Image.open(source).convert("RGB"))
     after = np.asarray(Image.open(output).convert("RGB"))
     assert np.array_equal(before[75:106, 20:221], after[75:106, 20:221])
+
+
+def test_quality_lama_mask_never_uses_group_union_as_erase_geometry(tmp_path):
+    class MaskPaintingInpainter:
+        def __call__(self, crop, mask):
+            result = crop.copy()
+            result[mask > 0] = (255, 0, 255)
+            return result
+
+    source = tmp_path / "grouped-outlined.png"
+    image = np.full((220, 320, 3), 180, dtype=np.uint8)
+    # Two outlined text columns surround artwork that belongs to the panel.
+    cv2.rectangle(image, (35, 35), (85, 185), (255, 255, 255), 12)
+    cv2.rectangle(image, (45, 45), (75, 175), (0, 0, 0), -1)
+    cv2.rectangle(image, (235, 35), (285, 185), (255, 255, 255), 12)
+    cv2.rectangle(image, (245, 45), (275, 175), (0, 0, 0), -1)
+    cv2.rectangle(image, (130, 60), (190, 160), (15, 15, 15), -1)
+    Image.fromarray(image).save(source)
+    page = PageOCR(
+        1,
+        source.name,
+        320,
+        220,
+        [
+            TextUnit(
+                "p001u01",
+                [20, 20, 300, 200],
+                [20, 20, 300, 200],
+                "日本語題名",
+                1.0,
+                False,
+                "中文标题",
+                erase_boxes=[[25, 25, 95, 195], [225, 25, 295, 195]],
+            )
+        ],
+    )
+    renderer = ArtworkPreservingRenderer(
+        cleanup_profile="quality",
+        inpainter=MaskPaintingInpainter(),
+    )
+    renderer._draw = lambda *_args, **_kwargs: None
+    output = tmp_path / "grouped-outlined-output.png"
+    renderer.render_page(source, page, output)
+    rendered = np.asarray(Image.open(output).convert("RGB"))
+    assert np.array_equal(rendered[60:161, 130:191], image[60:161, 130:191])
+
+
+def test_cover_title_uses_a_wider_per_box_outline_mask():
+    ordinary_style = TextStyle(
+        220, 0.6, "black", "white", 0.06, True, 100, True, True, 15, False
+    )
+    display_style = TextStyle(
+        220, 0.6, "black", "white", 0.06, True, 228, True, True, 15, True
+    )
+    ordinary = TextUnit("ordinary", [0, 0, 100, 200], [0, 0, 100, 200], "題", 1.0)
+    cover = TextUnit(
+        "cover", [0, 0, 100, 200], [0, 0, 100, 200], "題", 1.0, special="cover_title"
+    )
+    assert ArtworkPreservingRenderer._mask_dilation(ordinary, ordinary_style) == 15
+    assert ArtworkPreservingRenderer._mask_dilation(ordinary, display_style) == 51
+    assert ArtworkPreservingRenderer._mask_dilation(cover, display_style) == 51
+
+
+def test_large_outlined_cleanup_fills_only_detector_owned_boxes(tmp_path):
+    class MaskPaintingInpainter:
+        def __call__(self, crop, mask):
+            result = crop.copy()
+            result[mask > 0] = (255, 0, 255)
+            return result
+
+    source = tmp_path / "large-outlined.png"
+    image = np.full((300, 600, 3), 80, dtype=np.uint8)
+    Image.fromarray(image).save(source)
+    unit = TextUnit(
+        "display",
+        [20, 20, 580, 280],
+        [20, 20, 580, 280],
+        "大きい文字",
+        1.0,
+        False,
+        "大字",
+        erase_boxes=[[40, 40, 180, 260], [420, 40, 560, 260]],
+    )
+    page = PageOCR(1, source.name, 600, 300, [unit])
+    renderer = ArtworkPreservingRenderer(
+        cleanup_profile="quality", inpainter=MaskPaintingInpainter()
+    )
+    renderer._draw = lambda *_args, **_kwargs: None
+    renderer._analyze_style = lambda *_args: TextStyle(
+        80, 0.0, "white", "black", 0.066, True, 160, True, True, 40, False
+    )
+    output = tmp_path / "large-outlined-output.png"
+    renderer.render_page(source, page, output)
+    rendered = np.asarray(Image.open(output).convert("RGB"))
+    assert np.all(rendered[40:260, 40:180] == (255, 0, 255))
+    assert np.all(rendered[40:260, 420:560] == (255, 0, 255))
+    assert np.array_equal(rendered[40:260, 260:340], image[40:260, 260:340])
+
+
+def test_textured_outlined_cleanup_includes_source_stroke_halo(tmp_path):
+    class MaskPaintingInpainter:
+        def __call__(self, crop, mask):
+            result = crop.copy()
+            result[mask > 0] = (255, 0, 255)
+            return result
+
+    source = tmp_path / "outlined-halo.png"
+    image = np.full((300, 260, 3), 180, dtype=np.uint8)
+    Image.fromarray(image).save(source)
+    unit = TextUnit(
+        "outlined",
+        [50, 30, 210, 270],
+        [40, 20, 220, 280],
+        "日本語",
+        1.0,
+        False,
+        "中文",
+        erase_boxes=[[80, 60, 160, 240]],
+    )
+    page = PageOCR(1, source.name, 260, 300, [unit])
+    renderer = ArtworkPreservingRenderer(
+        cleanup_profile="quality", inpainter=MaskPaintingInpainter()
+    )
+    renderer._draw = lambda *_args, **_kwargs: None
+    renderer._analyze_style = lambda *_args: TextStyle(
+        180, 0.2, "black", "white", 0.066, True, 80, True, True, 24, False
+    )
+    output = tmp_path / "outlined-halo-output.png"
+    renderer.render_page(source, page, output)
+    rendered = np.asarray(Image.open(output).convert("RGB"))
+    # The type-size-aware detector halo includes outline/kana pixels omitted by
+    # the OCR core rectangle, so they cannot survive behind the translation.
+    assert np.all(rendered[45:255, 30:210] == (255, 0, 255))
+    # Unrelated artwork beyond that bounded detector halo is pixel-locked.
+    assert np.array_equal(rendered[:, :20], image[:, :20])
+    assert np.array_equal(rendered[:, 225:], image[:, 225:])
+
+
+def test_renderer_preserves_detached_garment_logo_from_legacy_group(tmp_path):
+    class MaskPaintingInpainter:
+        def __call__(self, crop, mask):
+            result = crop.copy()
+            result[mask > 0] = (255, 0, 255)
+            return result
+
+    source = tmp_path / "garment-logo.png"
+    image = np.full((800, 600, 3), 180, dtype=np.uint8)
+    Image.fromarray(image).save(source)
+    unit = TextUnit(
+        "mixed",
+        [10, 200, 580, 700],
+        [0, 180, 590, 720],
+        "おっぱいデカくね!?",
+        0.94,
+        False,
+        "胸是不是变大了！？",
+        erase_boxes=[
+            [20, 330, 80, 680],
+            [70, 340, 130, 620],
+            [150, 200, 580, 430],
+        ],
+    )
+    page = PageOCR(1, source.name, 600, 800, [unit])
+    renderer = ArtworkPreservingRenderer(
+        cleanup_profile="quality", inpainter=MaskPaintingInpainter()
+    )
+    renderer._draw = lambda *_args, **_kwargs: None
+    renderer._analyze_style = lambda *_args: TextStyle(
+        180, 0.2, "black", "white", 0.066, True, 80, True, True, 24, True
+    )
+    output = tmp_path / "garment-logo-output.png"
+    renderer.render_page(source, page, output)
+    rendered = np.asarray(Image.open(output).convert("RGB"))
+    assert np.all(rendered[360:590, 30:120] == (255, 0, 255))
+    assert np.array_equal(rendered[200:430, 180:560], image[200:430, 180:560])
+
+
+def test_grouped_column_width_is_an_upper_bound_for_font_size():
+    rgb = np.full((700, 500, 3), 210, dtype=np.uint8)
+    for x in (70, 300):
+        cv2.rectangle(rgb, (x, 80), (x + 120, 620), (255, 255, 255), 18)
+        cv2.rectangle(rgb, (x + 18, 100), (x + 102, 600), (0, 0, 0), -1)
+    unit = TextUnit(
+        "group",
+        [40, 50, 450, 650],
+        [40, 50, 450, 650],
+        "日本語の縦書き",
+        1.0,
+        False,
+        "中文竖排文字",
+        erase_boxes=[[50, 60, 210, 640], [280, 60, 440, 640]],
+    )
+    style = ArtworkPreservingRenderer._analyze_style(rgb, unit)
+    assert style.font_size <= 122
 
 
 def test_cleanup_preserves_artwork_connected_to_detector_edge():
@@ -98,13 +312,29 @@ def test_typesetting_is_clipped_to_declared_box(tmp_path):
             self.font_path = None
 
         def _draw(self, image, *_args):
-            ImageDraw.Draw(image).rectangle((-10, -10, image.width + 10, image.height + 10), fill="black")
+            ImageDraw.Draw(image).rectangle(
+                (-10, -10, image.width + 10, image.height + 10), fill="black"
+            )
 
     source = tmp_path / "clip.png"
     Image.new("RGB", (100, 100), "white").save(source)
-    page = PageOCR(1, source.name, 100, 100, [
-        TextUnit("p001u01", [20, 20, 80, 80], [20, 20, 80, 80], "日本", 1.0, False, "中国")
-    ])
+    page = PageOCR(
+        1,
+        source.name,
+        100,
+        100,
+        [
+            TextUnit(
+                "p001u01",
+                [20, 20, 80, 80],
+                [20, 20, 80, 80],
+                "日本",
+                1.0,
+                False,
+                "中国",
+            )
+        ],
+    )
     output = tmp_path / "clip-output.png"
     OverdrawRenderer().render_page(source, page, output)
     rendered = np.asarray(Image.open(output).convert("RGB"))
@@ -116,9 +346,14 @@ def test_typesetting_is_clipped_to_declared_box(tmp_path):
 
 def test_managed_font_download_is_validated_and_atomic(monkeypatch, tmp_path):
     root = tmp_path / "home"
-    paths = AppPaths(root, root / "models", root / "cache", root / "jobs", root / "settings.json")
+    paths = AppPaths(
+        root, root / "models", root / "cache", root / "jobs", root / "settings.json"
+    )
     payload = b"OTTO" + (b"0" * 1_000_000)
-    monkeypatch.setattr("manga_localizer.renderer.urlopen", lambda *_args, **_kwargs: io.BytesIO(payload))
+    monkeypatch.setattr(
+        "manga_localizer.renderer.urlopen",
+        lambda *_args, **_kwargs: io.BytesIO(payload),
+    )
     font = ensure_font(paths, force_managed=True)
     assert font.exists()
     assert font.read_bytes()[:4] == b"OTTO"

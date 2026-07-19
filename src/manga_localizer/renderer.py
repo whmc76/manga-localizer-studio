@@ -3,6 +3,7 @@ from __future__ import annotations
 import json
 import math
 import os
+from copy import deepcopy
 from dataclasses import dataclass
 from pathlib import Path
 from urllib.request import Request, urlopen
@@ -14,7 +15,7 @@ from PIL import Image, ImageDraw, ImageFont
 from .config import AppPaths
 from .inpainting import LaMaInpainter
 from .model_manager import ModelManager
-from .ocr import PageOCR, TextUnit
+from .ocr import PageOCR, TextUnit, prune_detached_orthogonal_outliers
 
 
 FONT_URL = (
@@ -70,7 +71,11 @@ def managed_bold_font_path(paths: AppPaths | None = None) -> Path:
 
 
 def find_font(paths: AppPaths | None = None) -> Path:
-    candidates = (os.environ.get("MLS_FONT"), managed_font_path(paths), *SYSTEM_FONT_CANDIDATES)
+    candidates = (
+        os.environ.get("MLS_FONT"),
+        managed_font_path(paths),
+        *SYSTEM_FONT_CANDIDATES,
+    )
     for candidate in candidates:
         if candidate and Path(candidate).exists():
             return Path(candidate)
@@ -121,7 +126,9 @@ def ensure_font(paths: AppPaths | None = None, force_managed: bool = False) -> P
     return _download_font(FONT_URL, target)
 
 
-def ensure_bold_font(paths: AppPaths | None = None, force_managed: bool = False) -> Path:
+def ensure_bold_font(
+    paths: AppPaths | None = None, force_managed: bool = False
+) -> Path:
     target = managed_bold_font_path(paths)
     if target.exists():
         return target
@@ -139,7 +146,11 @@ def _clean(text: str) -> str:
 
 
 def _fit_vertical(
-    font_path: Path, text: str, width: int, height: int, preferred_size: int | None = None
+    font_path: Path,
+    text: str,
+    width: int,
+    height: int,
+    preferred_size: int | None = None,
 ):
     start = min(height, max(20, preferred_size or min(160, width, height)))
     for size in range(start, 19, -2):
@@ -253,12 +264,21 @@ class ArtworkPreservingRenderer:
             estimated = math.sqrt(width * height / source_count) * 0.58
         elif vertical:
             line_widths = [max(1, box[2] - box[0]) for box in erase_boxes]
-            estimated = float(np.median(line_widths)) * 0.9
+            # Detector rectangles include ruby, punctuation and sometimes two
+            # touching glyph columns.  Their full width is therefore an upper
+            # bound, not the source em-size.  Keeping roughly three quarters
+            # of an outlined column (and two thirds of a plain one) matches
+            # the visible main-glyph footprint without letting grouped OCR
+            # regions inflate the translated typography.
+            box_ratio = 0.76 if outlined else 0.68
+            estimated = float(np.median(line_widths)) * box_ratio
             if len(erase_boxes) == 1 and line_widths[0] >= width * 0.8:
-                estimated = min(width * 0.72, height / max(1, len(_clean(unit.zh))) * 0.82)
+                estimated = min(
+                    width * 0.72, height / max(1, len(_clean(unit.zh))) * 0.82
+                )
         else:
             line_heights = [max(1, box[3] - box[1]) for box in erase_boxes]
-            estimated = float(np.median(line_heights)) * 0.86
+            estimated = float(np.median(line_heights)) * (0.78 if outlined else 0.7)
         font_size = max(20, min(320, round(estimated)))
 
         if mean < 145 and white_ratio < 0.35:
@@ -324,6 +344,18 @@ class ArtworkPreservingRenderer:
             )
         return selected
 
+    @staticmethod
+    def _mask_dilation(unit: TextUnit, style: TextStyle) -> int:
+        if style.outlined and (
+            unit.special == "cover_title" or style.display or style.font_size >= 120
+        ):
+            value = min(51, max(23, round(style.font_size * 0.22)))
+        elif style.outlined:
+            value = min(23, max(7, round(style.font_size * 0.14)))
+        else:
+            value = min(13, max(5, round(style.font_size * 0.08)))
+        return value + 1 if value % 2 == 0 else value
+
     def _erase_with_lama(
         self, rgb: np.ndarray, unit: TextUnit, style: TextStyle
     ) -> np.ndarray:
@@ -333,24 +365,33 @@ class ArtworkPreservingRenderer:
             min(64, max(12, round(style.font_size * 0.4))) if style.outlined else 0
         )
         x0, y0 = max(0, x0 - cleanup_margin), max(0, y0 - cleanup_margin)
-        x1, y1 = min(page_width, x1 + cleanup_margin), min(page_height, y1 + cleanup_margin)
+        x1, y1 = (
+            min(page_width, x1 + cleanup_margin),
+            min(page_height, y1 + cleanup_margin),
+        )
         context = min(256, max(64, round(style.font_size * 1.5)))
         rx0, ry0 = max(0, x0 - context), max(0, y0 - context)
         rx1, ry1 = min(page_width, x1 + context), min(page_height, y1 + context)
         crop = rgb[ry0:ry1, rx0:rx1].copy()
         mask = np.zeros(crop.shape[:2], dtype=np.uint8)
-        source_boxes = (
-            [[x0, y0, x1, y1]]
-            if style.outlined or style.display
-            else (unit.erase_boxes or [[x0, y0, x1, y1]])
+        # OCR may group several columns into one semantic unit.  The union is
+        # a typesetting region only; it is never valid erase geometry because
+        # it can contain faces, line art, furniture, or an entire panel.  LaMa
+        # receives only detector-owned source rectangles and builds a pixel
+        # mask independently inside each one.
+        source_boxes = unit.erase_boxes or [[x0, y0, x1, y1]]
+        # Display titles need enough reach to include their proportionally
+        # thick white outline. Each detector-owned box remains independent, so
+        # the wider title halo cannot turn the semantic group union into a mask.
+        dilation = self._mask_dilation(unit, style)
+        # A foreground-only component mask removes the dark glyph core but can
+        # leave the contrasting source outline behind as a conspicuous white
+        # silhouette.  On textured artwork, every confirmed outlined-text box
+        # therefore becomes an independent LaMa region.  The detector boxes,
+        # not their semantic union, remain the destructive authority.
+        solid_source_boxes = style.outlined and (
+            style.background_std >= 10 or style.display or unit.special == "cover_title"
         )
-        dilation = (
-            min(61, max(9, round(style.font_size * 0.27)))
-            if style.outlined
-            else min(17, max(5, round(style.font_size * 0.10)))
-        )
-        if dilation % 2 == 0:
-            dilation += 1
         for source_box in source_boxes:
             sx0 = max(x0, source_box[0]) - rx0
             sy0 = max(y0, source_box[1]) - ry0
@@ -360,8 +401,33 @@ class ArtworkPreservingRenderer:
                 continue
             pad_x = min(32, max(8, round((sx1 - sx0) * 0.08)))
             pad_y = min(32, max(8, round((sy1 - sy0) * 0.06)))
+            if solid_source_boxes:
+                # OCR rectangles frequently stop at the dark glyph core and
+                # can omit small kana or the outer half of a thick contrasting
+                # stroke.  Scale the cleanup halo from the measured type size
+                # instead of the detector rectangle alone.  The cap keeps
+                # separate columns separate, while the wider halo closes the
+                # small inter-box gaps in one outlined text cluster.
+                outline_pad = min(64, max(16, round(style.font_size * 0.72)))
+                pad_x = max(pad_x, outline_pad)
+                pad_y = max(pad_y, outline_pad)
             bx0, by0 = max(0, sx0 - pad_x), max(0, sy0 - pad_y)
             bx1, by1 = min(crop.shape[1], sx1 + pad_x), min(crop.shape[0], sy1 + pad_y)
+            # On dark or highly textured artwork, opposite-polarity outlined
+            # display text can be connected to the background in either the
+            # black or white threshold.  Pixel-component selection then keeps
+            # only pieces of the original glyph and LaMa faithfully recreates
+            # the visible remainder.  For genuinely large outlined lettering,
+            # the detector-owned rectangles are the safer source of truth.
+            # Fill each rectangle independently; never fill their semantic
+            # union, which may contain faces or other panel artwork.
+            if solid_source_boxes:
+                # Include the detector halo because the contrasting outline and
+                # nearby kana can sit outside the reported dark glyph core.
+                # Padding remains bounded per detector box rather than filling
+                # the semantic union, which may contain unrelated artwork.
+                mask[by0:by1, bx0:bx1] = 255
+                continue
             local = self._text_mask(crop[by0:by1, bx0:bx1], style, dilation)
             mask[by0:by1, bx0:bx1] = np.maximum(mask[by0:by1, bx0:bx1], local)
         allowed = np.zeros_like(mask)
@@ -398,7 +464,9 @@ class ArtworkPreservingRenderer:
                 continue
             mask[labels == label] = 255
         if dilation > 1 and mask.any():
-            mask = cv2.dilate(mask, np.ones((dilation, dilation), np.uint8), iterations=1)
+            mask = cv2.dilate(
+                mask, np.ones((dilation, dilation), np.uint8), iterations=1
+            )
         return mask
 
     @staticmethod
@@ -427,7 +495,9 @@ class ArtworkPreservingRenderer:
         return rgb, mean, white_ratio
 
     @staticmethod
-    def _erase_complete(rgb: np.ndarray, box: list[int]) -> tuple[np.ndarray, float, float]:
+    def _erase_complete(
+        rgb: np.ndarray, box: list[int]
+    ) -> tuple[np.ndarray, float, float]:
         """Remove all text-colored pixels inside an OCR-confirmed rectangle.
 
         This intentionally prefers complete source-text removal over conserving
@@ -478,7 +548,10 @@ class ArtworkPreservingRenderer:
             font, size, capacity = _fit_vertical(
                 font_path, text, width, height, style.font_size
             )
-            chunks = [text[index : index + capacity] for index in range(0, len(text), capacity)]
+            chunks = [
+                text[index : index + capacity]
+                for index in range(0, len(text), capacity)
+            ]
             step_x = round(size * (1.12 if style.display else 1.1))
             step_y = round(size * (1.18 if style.display else 1.07))
             start_x = right - max(0, (width - len(chunks) * step_x) / 2) - size
@@ -501,7 +574,9 @@ class ArtworkPreservingRenderer:
             stroke = round(size * style.stroke_ratio)
             y = top + max(0, (height - len(lines) * line_height) / 2)
             for line in lines:
-                line_width = draw.textbbox((0, 0), line, font=font, stroke_width=stroke)[2]
+                line_width = draw.textbbox(
+                    (0, 0), line, font=font, stroke_width=stroke
+                )[2]
                 draw.text(
                     (left + max(0, (width - line_width) / 2), y),
                     line,
@@ -523,9 +598,34 @@ class ArtworkPreservingRenderer:
         rgb = original.copy()
         styles: dict[str, TextStyle] = {}
         active = []
-        for unit in page.units:
-            if unit.skip or not unit.zh or (preserve_sfx and unit.is_sfx):
+        for source_unit in page.units:
+            if (
+                source_unit.skip
+                or not source_unit.zh
+                or (preserve_sfx and source_unit.is_sfx)
+            ):
                 continue
+            unit = deepcopy(source_unit)
+            source_boxes = unit.erase_boxes or [unit.bbox]
+            safe_boxes = prune_detached_orthogonal_outliers(source_boxes)
+            if safe_boxes != source_boxes:
+                unit.erase_boxes = safe_boxes
+                unit.bbox = [
+                    min(box[0] for box in safe_boxes),
+                    min(box[1] for box in safe_boxes),
+                    max(box[2] for box in safe_boxes),
+                    max(box[3] for box in safe_boxes),
+                ]
+                width = unit.bbox[2] - unit.bbox[0]
+                height = unit.bbox[3] - unit.bbox[1]
+                pad_x = max(10, round(width * 0.04))
+                pad_y = max(10, round(height * 0.03))
+                unit.crop_bbox = [
+                    max(0, unit.bbox[0] - pad_x),
+                    max(0, unit.bbox[1] - pad_y),
+                    min(page.width, unit.bbox[2] + pad_x),
+                    min(page.height, unit.bbox[3] + pad_y),
+                ]
             x0, y0, x1, y1 = unit.bbox
             unit.bbox = [
                 max(0, min(page.width, x0)),
@@ -586,7 +686,9 @@ class ArtworkPreservingRenderer:
                     max(0, min(page.height, ey1 + pad_y)),
                 ]
                 if bounded[2] > bounded[0] and bounded[3] > bounded[1]:
-                    erase = self._erase_complete if profile == "quality" else self._erase
+                    erase = (
+                        self._erase_complete if profile == "quality" else self._erase
+                    )
                     rgb, _, _ = erase(rgb, bounded)
         rendered = Image.fromarray(rgb)
         for unit in active:
@@ -627,6 +729,7 @@ class ArtworkPreservingRenderer:
             output = output_dir / f"{source.stem}{suffix}"
             manifest.append(self.render_page(source, page, output, preserve_sfx))
         (output_dir / "translation_manifest.json").write_text(
-            json.dumps({"pages": manifest}, ensure_ascii=False, indent=2), encoding="utf-8"
+            json.dumps({"pages": manifest}, ensure_ascii=False, indent=2),
+            encoding="utf-8",
         )
         return manifest

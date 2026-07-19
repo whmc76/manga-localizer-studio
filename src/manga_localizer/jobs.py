@@ -48,7 +48,9 @@ class JobStore:
                 "quality_profile": request.quality_profile,
                 "output_format": request.output_format,
                 "reviewed_transcript": (
-                    str(request.reviewed_transcript) if request.reviewed_transcript else None
+                    str(request.reviewed_transcript)
+                    if request.reviewed_transcript
+                    else None
                 ),
                 "device": request.device,
                 "inference_backend": request.inference_backend,
@@ -94,7 +96,9 @@ class JobService:
         self.paths = paths.ensure()
         self.store = JobStore(paths.jobs)
         self.pipeline_factory = pipeline_factory
-        self.executor = ThreadPoolExecutor(max_workers=1, thread_name_prefix="manga-localizer")
+        self.executor = ThreadPoolExecutor(
+            max_workers=1, thread_name_prefix="manga-localizer"
+        )
 
     def submit(self, request: PipelineRequest, total: int = 0) -> dict:
         # Store the page count before the worker can start, avoiding an API-side
@@ -144,5 +148,7 @@ class JobService:
             )
         except Exception as exc:
             job = self.store.get(job_id) or job
-            job.update(status="failed", phase="failed", error=str(exc), message="任务失败")
+            job.update(
+                status="failed", phase="failed", error=str(exc), message="任务失败"
+            )
         self.store.save(job)

@@ -18,9 +18,13 @@ from . import __version__
 from .config import AppPaths, UserSettings
 from .jobs import JobService
 from .model_manager import ModelManager
-from .ocr import list_images
+from .ocr import DEFAULT_OLLAMA_VISION_MODEL, list_images
 from .pipeline import PipelineRequest
-from .translator import available_remote_models
+from .translator import (
+    DEFAULT_LOCAL_TRANSLATION_MODEL,
+    available_remote_models,
+    validate_local_model_size,
+)
 
 
 class FolderRequest(BaseModel):
@@ -30,17 +34,17 @@ class FolderRequest(BaseModel):
 class SettingsPayload(BaseModel):
     target_language: str = "简体中文"
     story_context: bool = True
-    context_pages: int = Field(3, ge=0, le=12)
+    context_pages: int = Field(6, ge=0, le=12)
     preserve_sfx: bool = False
     quality_profile: Literal["quality", "fast"] = "quality"
     output_format: Literal["webp", "png"] = "webp"
     prefer_modelscope: bool = True
     device: str = "auto"
-    ocr_backend: Literal["builtin", "ollama"] = "builtin"
-    inference_backend: Literal["builtin", "ollama", "online"] = "builtin"
+    ocr_backend: Literal["builtin", "hybrid", "ollama"] = "hybrid"
+    inference_backend: Literal["builtin", "ollama", "online"] = "ollama"
     ollama_base_url: str = "http://127.0.0.1:11434"
-    ollama_model: str = "qwen2.5:7b"
-    ollama_ocr_model: str = "qwen2.5vl:7b"
+    ollama_model: str = DEFAULT_LOCAL_TRANSLATION_MODEL
+    ollama_ocr_model: str = DEFAULT_OLLAMA_VISION_MODEL
     online_base_url: str = "https://api.openai.com/v1"
     online_model: str = ""
     online_api_key: str | None = Field(default=None, max_length=2048)
@@ -49,7 +53,6 @@ class SettingsPayload(BaseModel):
 class JobPayload(SettingsPayload):
     source: str
     output: str
-    glossary: dict[str, str] = Field(default_factory=dict)
     reviewed_transcript: str | None = None
 
 
@@ -61,10 +64,11 @@ class BootstrapPayload(BaseModel):
 
 class InferenceCheckPayload(BaseModel):
     inference_backend: Literal["builtin", "ollama", "online"]
-    ocr_backend: Literal["builtin", "ollama"] = "builtin"
+    ocr_backend: Literal["builtin", "hybrid", "ollama"] = "hybrid"
+    quality_profile: Literal["quality", "fast"] = "quality"
     ollama_base_url: str = "http://127.0.0.1:11434"
-    ollama_model: str = "qwen2.5:7b"
-    ollama_ocr_model: str = "qwen2.5vl:7b"
+    ollama_model: str = DEFAULT_LOCAL_TRANSLATION_MODEL
+    ollama_ocr_model: str = DEFAULT_OLLAMA_VISION_MODEL
     online_base_url: str = "https://api.openai.com/v1"
     online_model: str = ""
     online_api_key: str | None = Field(default=None, max_length=2048)
@@ -88,7 +92,9 @@ def _pick_folder(initial: str | None = None) -> str:
 def create_app(paths: AppPaths | None = None, pipeline_factory=None) -> FastAPI:
     paths = (paths or AppPaths.from_env()).ensure()
     models = ModelManager(paths)
-    jobs = JobService(paths, pipeline_factory) if pipeline_factory else JobService(paths)
+    jobs = (
+        JobService(paths, pipeline_factory) if pipeline_factory else JobService(paths)
+    )
     app = FastAPI(title="Manga Localizer Studio", version=__version__)
     tasks: dict[str, dict] = {}
     task_lock = threading.RLock()
@@ -148,9 +154,13 @@ def create_app(paths: AppPaths | None = None, pipeline_factory=None) -> FastAPI:
                         message=message,
                     ),
                 )
-            _update_task(task_id, status="complete", progress=100, message="全部模型已就绪")
+            _update_task(
+                task_id, status="complete", progress=100, message="全部模型已就绪"
+            )
         except Exception as exc:
-            _update_task(task_id, status="failed", error=str(exc), message="模型准备失败")
+            _update_task(
+                task_id, status="failed", error=str(exc), message="模型准备失败"
+            )
 
     def _update_task(task_id: str, **values):
         with task_lock:
@@ -200,7 +210,22 @@ def create_app(paths: AppPaths | None = None, pipeline_factory=None) -> FastAPI:
             if payload.online_api_key is not None
             else secrets["online_api_key"]
         )
-        if payload.ocr_backend == "ollama" or payload.inference_backend == "ollama":
+        if (
+            payload.ocr_backend in {"hybrid", "ollama"}
+            or payload.inference_backend == "ollama"
+        ):
+            try:
+                if payload.inference_backend == "ollama":
+                    validate_local_model_size(payload.ollama_model)
+                if payload.ocr_backend in {"hybrid", "ollama"}:
+                    validate_local_model_size(payload.ollama_ocr_model)
+            except ValueError as exc:
+                return {
+                    "ok": False,
+                    "backend": "ollama",
+                    "message": str(exc),
+                    "models": [],
+                }
             try:
                 ollama_available = available_remote_models(
                     "ollama", payload.ollama_base_url, ""
@@ -208,11 +233,13 @@ def create_app(paths: AppPaths | None = None, pipeline_factory=None) -> FastAPI:
             except RuntimeError as exc:
                 raise HTTPException(503, str(exc)) from exc
             required_ollama = []
-            if payload.ocr_backend == "ollama":
+            if payload.ocr_backend in {"hybrid", "ollama"}:
                 required_ollama.append(payload.ollama_ocr_model)
             if payload.inference_backend == "ollama":
                 required_ollama.append(payload.ollama_model)
-            missing = [model for model in required_ollama if model not in ollama_available]
+            missing = [
+                model for model in required_ollama if model not in ollama_available
+            ]
             if missing:
                 return {
                     "ok": False,
@@ -221,22 +248,35 @@ def create_app(paths: AppPaths | None = None, pipeline_factory=None) -> FastAPI:
                     "models": ollama_available,
                 }
             if payload.inference_backend != "online":
-                builtin_ready = (
-                    payload.inference_backend != "builtin" or models.is_ready("hy-mt2")
-                )
+                required_local = []
+                if payload.inference_backend == "builtin" or (
+                    payload.inference_backend == "ollama"
+                    and payload.quality_profile == "quality"
+                ):
+                    required_local.append("hy-mt2")
+                if payload.ocr_backend != "ollama":
+                    required_local.extend(["paddleocr", "manga-ocr"])
+                missing_local = [
+                    model_id
+                    for model_id in required_local
+                    if not models.is_ready(model_id)
+                ]
+                builtin_ready = not missing_local
                 return {
                     "ok": builtin_ready,
                     "backend": "ollama",
                     "message": (
                         f"已连接，发现 {len(ollama_available)} 个模型"
                         if builtin_ready
-                        else "Ollama OCR 已连接，但 Hy-MT2 尚未下载"
+                        else f"Ollama 已连接，但本地组件未就绪：{', '.join(missing_local)}"
                     ),
                     "models": ollama_available,
                 }
         base_url = payload.online_base_url
         try:
-            available = available_remote_models(payload.inference_backend, base_url, api_key)
+            available = available_remote_models(
+                payload.inference_backend, base_url, api_key
+            )
         except RuntimeError as exc:
             raise HTTPException(503, str(exc)) from exc
         selected = (
@@ -285,7 +325,7 @@ def create_app(paths: AppPaths | None = None, pipeline_factory=None) -> FastAPI:
         if source == output:
             raise HTTPException(422, "Output folder must differ from source")
         settings = SettingsPayload(
-            **payload.model_dump(exclude={"source", "output", "glossary", "reviewed_transcript"})
+            **payload.model_dump(exclude={"source", "output", "reviewed_transcript"})
         )
         active = save_settings_payload(settings)
         api_key = payload.online_api_key
@@ -301,7 +341,6 @@ def create_app(paths: AppPaths | None = None, pipeline_factory=None) -> FastAPI:
             quality_profile=payload.quality_profile,
             output_format=payload.output_format,
             device=payload.device,
-            glossary=payload.glossary,
             inference_backend=active.inference_backend,
             ocr_backend=active.ocr_backend,
             ollama_base_url=active.ollama_base_url,
@@ -343,7 +382,11 @@ def create_app(paths: AppPaths | None = None, pipeline_factory=None) -> FastAPI:
         if kind == "source":
             path = source_file
         elif kind == "output":
-            suffix = ".webp" if job["request"].get("output_format", "webp") == "webp" else ".png"
+            suffix = (
+                ".webp"
+                if job["request"].get("output_format", "webp") == "webp"
+                else ".png"
+            )
             path = output / f"{source_file.stem}{suffix}"
         else:
             raise HTTPException(422, "Preview kind must be source or output")

@@ -59,7 +59,9 @@ class LaMaInpainter:
         height, width = rgb.shape[:2]
         pad_height = (-height) % 8
         pad_width = (-width) % 8
-        image_tensor = torch.from_numpy(rgb.astype(np.float32) / 255.0).permute(2, 0, 1)[None]
+        image_tensor = torch.from_numpy(rgb.astype(np.float32) / 255.0).permute(
+            2, 0, 1
+        )[None]
         mask_tensor = torch.from_numpy(binary.astype(np.float32))[None, None]
         if pad_height or pad_width:
             image_tensor = torch.nn.functional.pad(
