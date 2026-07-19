@@ -6,7 +6,7 @@
 
 ## 实机效果：前三页对比
 
-下面三张图来自 v0.5 对一部 125 页漫画的全书本地实测，使用当前项目的通用 OCR、自动人名统一、9B 上下文审校、LaMa 补画和样式重建模块；没有人工人名表，也没有调用在线 LLM API。共处理 1,285 个文字单元：替换中文 687 个、按设置保留拟声词 598 个，未解决单元 0、无效译文 0、声明区域外变化像素 0。README 只做等比例缩略展示，源图与成品均保持 2126×3661 原始尺寸。完整指标见 [`docs/benchmarks/V0.5_FULL_BOOK_REPORT.md`](docs/benchmarks/V0.5_FULL_BOOK_REPORT.md)。
+下面三张图来自 v0.5.1 对一部 125 页漫画的全书本地实测，使用当前项目的通用 OCR、自动人名统一、9B 上下文审校、LaMa 补画和样式重建模块；没有人工人名表，也没有调用在线 LLM API。共处理 1,285 个文字单元：替换中文 687 个、按设置保留拟声词 598 个，未解决单元 0、无效译文 0、声明区域外变化像素 0。README 只做等比例缩略展示，源图与成品均保持 2126×3661 原始尺寸。完整指标见 [`docs/benchmarks/V0.5_FULL_BOOK_REPORT.md`](docs/benchmarks/V0.5_FULL_BOOK_REPORT.md)。
 
 ![第 1 页原图与简体中文输出对比](docs/screenshots/comparisons/comparison-page-01.webp)
 

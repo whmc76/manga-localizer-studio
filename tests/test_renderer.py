@@ -188,7 +188,46 @@ def test_large_outlined_cleanup_fills_only_detector_owned_boxes(tmp_path):
     rendered = np.asarray(Image.open(output).convert("RGB"))
     assert np.all(rendered[40:260, 40:180] == (255, 0, 255))
     assert np.all(rendered[40:260, 420:560] == (255, 0, 255))
-    assert np.array_equal(rendered[40:260, 220:380], image[40:260, 220:380])
+    assert np.array_equal(rendered[40:260, 260:340], image[40:260, 260:340])
+
+
+def test_textured_outlined_cleanup_includes_source_stroke_halo(tmp_path):
+    class MaskPaintingInpainter:
+        def __call__(self, crop, mask):
+            result = crop.copy()
+            result[mask > 0] = (255, 0, 255)
+            return result
+
+    source = tmp_path / "outlined-halo.png"
+    image = np.full((300, 260, 3), 180, dtype=np.uint8)
+    Image.fromarray(image).save(source)
+    unit = TextUnit(
+        "outlined",
+        [50, 30, 210, 270],
+        [40, 20, 220, 280],
+        "日本語",
+        1.0,
+        False,
+        "中文",
+        erase_boxes=[[80, 60, 160, 240]],
+    )
+    page = PageOCR(1, source.name, 260, 300, [unit])
+    renderer = ArtworkPreservingRenderer(
+        cleanup_profile="quality", inpainter=MaskPaintingInpainter()
+    )
+    renderer._draw = lambda *_args, **_kwargs: None
+    renderer._analyze_style = lambda *_args: TextStyle(
+        180, 0.2, "black", "white", 0.066, True, 80, True, True, 24, False
+    )
+    output = tmp_path / "outlined-halo-output.png"
+    renderer.render_page(source, page, output)
+    rendered = np.asarray(Image.open(output).convert("RGB"))
+    # The type-size-aware detector halo includes outline/kana pixels omitted by
+    # the OCR core rectangle, so they cannot survive behind the translation.
+    assert np.all(rendered[45:255, 30:210] == (255, 0, 255))
+    # Unrelated artwork beyond that bounded detector halo is pixel-locked.
+    assert np.array_equal(rendered[:, :20], image[:, :20])
+    assert np.array_equal(rendered[:, 225:], image[:, 225:])
 
 
 def test_grouped_column_width_is_an_upper_bound_for_font_size():

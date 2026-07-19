@@ -1,5 +1,11 @@
 # Changelog
 
+## 0.5.1 - 2026-07-19
+
+- Remove thick contrasting source outlines as part of the LaMa mask instead of selecting only the dark glyph core, eliminating white silhouettes behind translated text.
+- Scale the bounded cleanup halo from the measured source font size so OCR boxes that omit ruby or the outer stroke cannot leave residual Japanese fragments between detector rectangles.
+- Keep grouped detector regions independent and restore every pixel outside declared text regions; the 125-page lossless WebP benchmark again passes with zero unresolved units and zero out-of-boundary pixel changes.
+
 ## 0.5.0 - 2026-07-19
 
 - Add a fully local quality ensemble: one unrestricted Qwen3.5 9B model performs staged drafting, candidate selection, and targeted semantic-risk retranslation, with Hy-MT2 providing the independent candidate.

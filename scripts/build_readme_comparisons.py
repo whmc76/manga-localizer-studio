@@ -64,7 +64,7 @@ def main() -> None:
             font=title_font,
             fill="white",
         )
-        draw.text((width - 136, 24), "v0.5 实测", font=badge_font, fill=charcoal)
+        draw.text((width - 152, 24), "v0.5.1 实测", font=badge_font, fill=charcoal)
 
         for image_path, x in ((source, margin), (output, width // 2 + margin)):
             with Image.open(image_path) as image:
