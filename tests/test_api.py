@@ -23,7 +23,9 @@ class FakePipeline:
 
 def make_paths(tmp_path):
     root = tmp_path / "home"
-    return AppPaths(root, root / "models", root / "cache", root / "jobs", root / "settings.json")
+    return AppPaths(
+        root, root / "models", root / "cache", root / "jobs", root / "settings.json"
+    )
 
 
 def test_health_models_and_job_flow(tmp_path):
@@ -34,7 +36,9 @@ def test_health_models_and_job_flow(tmp_path):
     source.mkdir()
     Image.new("RGB", (32, 32), "white").save(source / "1.png")
     output = tmp_path / "output"
-    response = client.post("/api/jobs", json={"source": str(source), "output": str(output)})
+    response = client.post(
+        "/api/jobs", json={"source": str(source), "output": str(output)}
+    )
     assert response.status_code == 200
     job_id = response.json()["id"]
     for _ in range(100):
@@ -52,7 +56,9 @@ def test_rejects_source_as_output(tmp_path):
     source = tmp_path / "source"
     source.mkdir()
     Image.new("RGB", (16, 16), "white").save(source / "1.png")
-    response = client.post("/api/jobs", json={"source": str(source), "output": str(source)})
+    response = client.post(
+        "/api/jobs", json={"source": str(source), "output": str(source)}
+    )
     assert response.status_code == 422
 
 
@@ -94,8 +100,11 @@ def test_inference_check_lists_remote_models(monkeypatch, tmp_path):
         "/api/inference/check",
         json={
             "inference_backend": "ollama",
+            "ocr_backend": "ollama",
+            "quality_profile": "fast",
             "ollama_base_url": "http://127.0.0.1:11434",
             "ollama_model": "qwen-test",
+            "ollama_ocr_model": "qwen-test",
         },
     )
     assert response.status_code == 200
@@ -105,3 +114,46 @@ def test_inference_check_lists_remote_models(monkeypatch, tmp_path):
         "message": "已连接，发现 1 个模型",
         "models": ["qwen-test"],
     }
+
+
+def test_quality_inference_check_reuses_the_selected_9b_model(monkeypatch, tmp_path):
+    monkeypatch.setattr(
+        "manga_localizer.api.available_remote_models",
+        lambda backend, base_url, api_key: ["draft-model"],
+    )
+    monkeypatch.setattr("manga_localizer.api.ModelManager.is_ready", lambda *_: True)
+    client = TestClient(create_app(make_paths(tmp_path), pipeline_factory=FakePipeline))
+    response = client.post(
+        "/api/inference/check",
+        json={
+            "inference_backend": "ollama",
+            "ocr_backend": "ollama",
+            "quality_profile": "quality",
+            "ollama_model": "draft-model",
+            "ollama_ocr_model": "draft-model",
+        },
+    )
+    assert response.status_code == 200
+    assert response.json() == {
+        "ok": True,
+        "backend": "ollama",
+        "message": "已连接，发现 1 个模型",
+        "models": ["draft-model"],
+    }
+
+
+def test_inference_check_rejects_local_models_above_9b(tmp_path):
+    client = TestClient(create_app(make_paths(tmp_path), pipeline_factory=FakePipeline))
+    response = client.post(
+        "/api/inference/check",
+        json={
+            "inference_backend": "ollama",
+            "ocr_backend": "ollama",
+            "quality_profile": "quality",
+            "ollama_model": "qwen3.5:14b",
+            "ollama_ocr_model": "qwen3.5:9b",
+        },
+    )
+    assert response.status_code == 200
+    assert response.json()["ok"] is False
+    assert "最多支持 9B" in response.json()["message"]

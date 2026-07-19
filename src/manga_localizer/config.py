@@ -16,9 +16,11 @@ class AppPaths:
 
     @classmethod
     def from_env(cls) -> "AppPaths":
-        root = Path(
-            os.environ.get("MLS_HOME", Path.home() / ".manga-localizer-studio")
-        ).expanduser().resolve()
+        root = (
+            Path(os.environ.get("MLS_HOME", Path.home() / ".manga-localizer-studio"))
+            .expanduser()
+            .resolve()
+        )
         return cls(
             root=root,
             models=root / "models",
@@ -37,17 +39,17 @@ class AppPaths:
 class UserSettings:
     target_language: str = "简体中文"
     story_context: bool = True
-    context_pages: int = 3
-    preserve_sfx: bool = False
+    context_pages: int = 6
+    preserve_sfx: bool = True
     quality_profile: str = "quality"
     output_format: str = "webp"
     prefer_modelscope: bool = True
     device: str = "auto"
-    ocr_backend: str = "builtin"
-    inference_backend: str = "builtin"
+    ocr_backend: str = "hybrid"
+    inference_backend: str = "ollama"
     ollama_base_url: str = "http://127.0.0.1:11434"
-    ollama_model: str = "qwen2.5:7b"
-    ollama_ocr_model: str = "qwen2.5vl:7b"
+    ollama_model: str = "huihui_ai/qwen3.5-abliterated:9b"
+    ollama_ocr_model: str = "huihui_ai/qwen3.5-abliterated:9b"
     online_base_url: str = "https://api.openai.com/v1"
     online_model: str = ""
 
@@ -61,7 +63,9 @@ class UserSettings:
 
     def save(self, path: Path) -> None:
         path.parent.mkdir(parents=True, exist_ok=True)
-        path.write_text(json.dumps(asdict(self), ensure_ascii=False, indent=2), encoding="utf-8")
+        path.write_text(
+            json.dumps(asdict(self), ensure_ascii=False, indent=2), encoding="utf-8"
+        )
 
 
 def configure_model_caches(paths: AppPaths) -> None:

@@ -1,5 +1,24 @@
 # Changelog
 
+## 0.5.0 - 2026-07-19
+
+- Add a fully local quality ensemble: one unrestricted Qwen3.5 9B model performs staged drafting, candidate selection, and targeted semantic-risk retranslation, with Hy-MT2 providing the independent candidate.
+- Bound the 9B reviewer to a 32K working context and deterministic structured output; the unrestricted model's hidden-thinking mode could consume 32K output tokens without emitting JSON, so semantic checks are expressed directly in the verifier prompt instead.
+- Add ModelScope-first automatic name resolution with JMnedict-backed recurring-name consistency, without book-specific name tables.
+- Combine Paddle exact geometry, Manga OCR recognition, and full-page 9B semantic correction; VLM-only boxes can never erase artwork.
+- Recover VLM-reported omissions through enlarged Paddle re-detection and independent Manga OCR confirmation, including pages where the first detector pass finds no text.
+- Prevent complete hiragana dialogue from being misclassified as sound effects while preserving explicit katakana effects, isolated glyphs, and short vocalizations.
+- Make six previous pages the default story context and add source-density layout budgets for compact Chinese text in narrow manga regions.
+- Require only Hy-MT2 plus the selected 9B-or-smaller Ollama model in quality-mode readiness checks, and retain the single-model fast profile for lighter hardware.
+- Keep lossless WebP at native pixel dimensions and preserve LaMa's strict masked-edit boundary.
+- Load Hy-MT2 only for its candidate stage and explicitly release it and the 9B model between stages so LaMa rendering does not inherit translation VRAM pressure.
+- Enforce one shared translation acceptance gate across draft, repair, candidate selection, and semantic audit, including simplified-Chinese normalization, source-information density, glossary consistency, and negation preservation.
+- Keep ordinary A/B selection deterministic and non-thinking, reserving bounded reasoning for semantic-risk and unresolved lines instead of applying it to hundreds of ordinary wording differences.
+- Filter duplicate ruby, crop echoes, malformed tiny OCR fragments, and VLM-only hallucinations before translation; exact detector geometry remains the only authority allowed to erase pixels.
+- Add targeted semantic checks for questions, negation, invitations, names, laughter, and game-related actions, then retranslate only the risky units with the same local 9B model.
+- Preserve large multi-column outlined lettering as one composition while retaining the original per-column erase boxes, font weight, foreground color, and contrasting stroke.
+- Complete a 125-page native-resolution benchmark with 1,285 text units, 687 Chinese replacements, 598 intentionally preserved sound-effect units, zero unresolved or invalid translations, and zero changed pixels outside declared edit regions.
+
 ## 0.4.6 - 2026-07-19
 
 - Add a distinct final repair pass when a local translation remains empty, malformed, or contains Japanese kana, while keeping the incomplete-work quality gate strict.

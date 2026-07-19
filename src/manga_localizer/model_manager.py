@@ -109,9 +109,19 @@ class ModelManager:
             {
                 **asdict(spec),
                 "required": (
-                    (spec.id != "hy-mt2" or inference_backend == "builtin")
+                    (
+                        spec.id != "hy-mt2"
+                        or inference_backend == "builtin"
+                        or (
+                            inference_backend == "ollama"
+                            and quality_profile == "quality"
+                        )
+                    )
                     and (spec.id != "lama" or quality_profile == "quality")
-                    and (spec.id not in {"paddleocr", "manga-ocr"} or ocr_backend == "builtin")
+                    and (
+                        spec.id not in {"paddleocr", "manga-ocr"}
+                        or ocr_backend in {"builtin", "hybrid"}
+                    )
                 ),
                 "ready": self.is_ready(spec.id),
                 "path": str(self.model_dir(spec.id)),
@@ -160,7 +170,10 @@ class ModelManager:
                 headers={"User-Agent": "Manga-Localizer-Studio/0.3"},
             )
             try:
-                with urlopen(request, timeout=180) as response, partial.open("wb") as handle:
+                with (
+                    urlopen(request, timeout=180) as response,
+                    partial.open("wb") as handle,
+                ):
                     total_bytes = int(response.headers.get("Content-Length", "0"))
                     received = 0
                     while chunk := response.read(1024 * 1024):
@@ -187,7 +200,9 @@ class ModelManager:
             self._require("manga_ocr")
             from manga_ocr import MangaOcr
 
-            callback(15, "Hugging Face fallback: manga-ocr has no ModelScope equivalent")
+            callback(
+                15, "Hugging Face fallback: manga-ocr has no ModelScope equivalent"
+            )
             MangaOcr(force_cpu=True)
         elif model_id == "paddleocr":
             self._require("paddleocr")
@@ -204,7 +219,9 @@ class ModelManager:
                 enable_mkldnn=False,
             )
         callback(95, f"Verifying {spec.name}")
-        self.mark_ready(model_id, {"repository": spec.repository, "provider": spec.provider})
+        self.mark_ready(
+            model_id, {"repository": spec.repository, "provider": spec.provider}
+        )
         callback(100, f"{spec.name} is ready")
         return target
 

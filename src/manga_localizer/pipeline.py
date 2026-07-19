@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import re
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Callable
@@ -8,26 +9,61 @@ from typing import Callable
 from PIL import Image
 
 from .config import AppPaths, UserSettings
+from .name_dictionary import JapaneseNameDictionary
 from .ocr import (
+    DEFAULT_OLLAMA_VISION_MODEL,
     EXPLICIT_SKIP_REASONS,
     UNRESOLVED_SKIP_REASON,
+    HybridMangaOCR,
     PageOCR,
     OllamaVisionOCR,
     PaddleMangaOCR,
     TextUnit,
+    likely_sfx_text,
     list_images,
+    semantic_sfx_classification,
 )
 from .renderer import ArtworkPreservingRenderer
 from .model_manager import ModelManager
 from .translator import (
+    DEFAULT_LOCAL_TRANSLATION_MODEL,
     HyMTTranslator,
+    LocalQualityTranslator,
     OllamaTranslator,
     OpenAICompatibleTranslator,
     PromptTranslator,
+    ensure_ollama_model,
 )
 
 
 ProgressCallback = Callable[[str, int, int, str], None]
+OCR_CACHE_VERSION = 4
+
+
+def unsafe_semantic_missing(page: PageOCR, preserve_sfx: bool) -> list[dict]:
+    """Return full-page findings that cannot safely remain outside exact geometry."""
+    unsafe = []
+    for item in page.semantic_missing:
+        text = str(item.get("text", "")).strip()
+        japanese_chars = re.findall(r"[ぁ-ゖァ-ヺ\u3400-\u9fff]", text)
+        single_kana_fragment = len(japanese_chars) == 1 and bool(
+            re.fullmatch(r"[ぁ-ゖァ-ヺ]", japanese_chars[0])
+        )
+        short_vocalization = len(japanese_chars) <= 3 and bool(
+            re.search(r"[っッゃゅょャュョ♡♥]", text)
+        )
+        preservable = (
+            single_kana_fragment
+            or short_vocalization
+            or semantic_sfx_classification(
+                text,
+                float(item.get("score", 0.0)),
+                bool(item.get("is_sfx", False)),
+            )
+        )
+        if not preserve_sfx or not preservable:
+            unsafe.append(item)
+    return unsafe
 
 
 @dataclass
@@ -36,17 +72,17 @@ class PipelineRequest:
     output: Path
     target_language: str = "简体中文"
     story_context: bool = True
-    context_pages: int = 3
-    preserve_sfx: bool = False
+    context_pages: int = 6
+    preserve_sfx: bool = True
     quality_profile: str = "quality"
     output_format: str = "webp"
     device: str = "auto"
     glossary: dict[str, str] | None = None
-    inference_backend: str = "builtin"
-    ocr_backend: str = "builtin"
+    inference_backend: str = "ollama"
+    ocr_backend: str = "hybrid"
     ollama_base_url: str = "http://127.0.0.1:11434"
-    ollama_model: str = "qwen2.5:7b"
-    ollama_ocr_model: str = "qwen2.5vl:7b"
+    ollama_model: str = DEFAULT_LOCAL_TRANSLATION_MODEL
+    ollama_ocr_model: str = DEFAULT_OLLAMA_VISION_MODEL
     online_base_url: str = "https://api.openai.com/v1"
     online_model: str = ""
     online_api_key: str = ""
@@ -58,7 +94,9 @@ class LocalizerPipeline:
         self.paths = paths.ensure()
 
     @staticmethod
-    def _emit(callback: ProgressCallback, phase: str, current: int, total: int, message: str):
+    def _emit(
+        callback: ProgressCallback, phase: str, current: int, total: int, message: str
+    ):
         callback(phase, current, total, message)
 
     @staticmethod
@@ -71,7 +109,9 @@ class LocalizerPipeline:
         payload = {"source": str(source), "pages": [page.to_dict() for page in pages]}
         if glossary:
             payload["glossary"] = glossary
-        path.write_text(json.dumps(payload, ensure_ascii=False, indent=2), encoding="utf-8")
+        path.write_text(
+            json.dumps(payload, ensure_ascii=False, indent=2), encoding="utf-8"
+        )
 
     @staticmethod
     def _load_cached_ocr(
@@ -80,6 +120,7 @@ class LocalizerPipeline:
         index: int,
         ocr_backend: str = "builtin",
         quality_profile: str = "quality",
+        ocr_model: str = "",
     ) -> PageOCR | None:
         cache_path = work / f"{image_path.stem}.ocr.json"
         if not cache_path.is_file():
@@ -98,23 +139,39 @@ class LocalizerPipeline:
             return None
         metadata = payload.get("_cache")
         if metadata:
+            if int(metadata.get("version", -1)) != OCR_CACHE_VERSION:
+                return None
             if metadata.get("ocr_backend") != ocr_backend:
                 return None
             if metadata.get("quality_profile") != quality_profile:
+                return None
+            if (
+                ocr_backend in {"hybrid", "ollama"}
+                and metadata.get("ocr_model") != ocr_model
+            ):
                 return None
             if int(metadata.get("source_size", -1)) != source_stat.st_size:
                 return None
             if int(metadata.get("source_mtime_ns", -1)) != source_stat.st_mtime_ns:
                 return None
         else:
-            # v0.4.5 and earlier only produced the built-in quality cache.
-            if (ocr_backend, quality_profile) != ("builtin", "quality"):
-                return None
-            if cache_path.stat().st_mtime_ns < source_stat.st_mtime_ns:
-                return None
+            # Legacy caches predate detector-preserving quality OCR and can
+            # silently omit valid Japanese bubbles.  They are never safe to
+            # reuse after the cache contract changed.
+            return None
+        # Text-only classification improvements are safe to apply to an OCR
+        # cache without repeating model inference.  This keeps expensive OCR
+        # reusable while preventing legacy mixed-kana sound effects from being
+        # sent to the translator as dialogue.
+        for unit in page.units:
+            unit.is_sfx = semantic_sfx_classification(
+                unit.ja, unit.score, unit.is_sfx or likely_sfx_text(unit.ja)
+            )
         return page
 
-    def run(self, request: PipelineRequest, callback: ProgressCallback | None = None) -> dict:
+    def run(
+        self, request: PipelineRequest, callback: ProgressCallback | None = None
+    ) -> dict:
         emit = callback or (lambda _phase, _current, _total, _message: None)
         source = request.source.expanduser().resolve()
         output = request.output.expanduser().resolve()
@@ -134,7 +191,9 @@ class LocalizerPipeline:
             payload = json.loads(transcript_path.read_text(encoding="utf-8"))
             pages = [page_from_dict(item) for item in payload["pages"]]
             self._validate_reviewed_pages(files, pages)
-            self._emit(emit, "ocr", total, total, f"已导入审校稿 {transcript_path.name}")
+            self._emit(
+                emit, "ocr", total, total, f"已导入审校稿 {transcript_path.name}"
+            )
         else:
             cached_pages = [
                 self._load_cached_ocr(
@@ -143,12 +202,17 @@ class LocalizerPipeline:
                     index,
                     request.ocr_backend,
                     request.quality_profile,
+                    (
+                        request.ollama_ocr_model
+                        if request.ocr_backend in {"hybrid", "ollama"}
+                        else ""
+                    ),
                 )
                 for index, image_path in enumerate(files, start=1)
             ]
             title_refinements = [
                 bool(
-                    request.ocr_backend == "builtin"
+                    request.ocr_backend in {"builtin", "hybrid"}
                     and page is not None
                     and PaddleMangaOCR.is_cover_title_candidate(page)
                 )
@@ -157,7 +221,21 @@ class LocalizerPipeline:
             ocr = None
             if any(page is None for page in cached_pages) or any(title_refinements):
                 if request.ocr_backend == "builtin":
-                    ocr = PaddleMangaOCR(self.paths, request.device, request.quality_profile)
+                    ocr = PaddleMangaOCR(
+                        self.paths, request.device, request.quality_profile
+                    )
+                elif request.ocr_backend == "hybrid":
+                    self._emit(emit, "ocr", 0, total, "检查本地视觉语义模型")
+                    ensure_ollama_model(
+                        request.ollama_base_url, request.ollama_ocr_model
+                    )
+                    ocr = HybridMangaOCR(
+                        self.paths,
+                        request.ollama_base_url,
+                        request.ollama_ocr_model,
+                        request.device,
+                        request.quality_profile,
+                    )
                 elif request.ocr_backend == "ollama":
                     ocr = OllamaVisionOCR(
                         request.ollama_base_url, request.ollama_ocr_model
@@ -173,17 +251,35 @@ class LocalizerPipeline:
                     if title_refinements[index - 1]:
                         page = ocr.refine_cover_title(image_path, page)
                         cache_updated = page is not cached_page
-                    self._emit(emit, "ocr", index - 1, total, f"复用 OCR {image_path.name}")
+                    self._emit(
+                        emit, "ocr", index - 1, total, f"复用 OCR {image_path.name}"
+                    )
                 else:
                     self._emit(emit, "ocr", index - 1, total, f"识别 {image_path.name}")
                     page = ocr.analyze(image_path, index)
+                unsafe_missing = unsafe_semantic_missing(page, request.preserve_sfx)
+                if unsafe_missing:
+                    texts = " / ".join(
+                        str(item.get("text", "")).strip() or "未识别文字"
+                        for item in unsafe_missing[:4]
+                    )
+                    raise RuntimeError(
+                        f"第 {index} 页发现未被精确检测框覆盖的文字：{texts}。"
+                        "质量模式拒绝猜测擦除区域，请更换 OCR 模型或重试。"
+                    )
                 pages.append(page)
                 if cached_page is None or cache_updated:
                     page_payload = page.to_dict()
                     source_stat = image_path.stat()
                     page_payload["_cache"] = {
+                        "version": OCR_CACHE_VERSION,
                         "ocr_backend": request.ocr_backend,
                         "quality_profile": request.quality_profile,
+                        "ocr_model": (
+                            request.ollama_ocr_model
+                            if request.ocr_backend in {"hybrid", "ollama"}
+                            else ""
+                        ),
                         "source_size": source_stat.st_size,
                         "source_mtime_ns": source_stat.st_mtime_ns,
                     }
@@ -200,19 +296,52 @@ class LocalizerPipeline:
             for page in pages
             for unit in page.units
         )
-        self._emit(emit, "translate", 0, total, "加载翻译后端" if needs_translation else "审校稿已包含译文")
+        self._emit(
+            emit,
+            "translate",
+            0,
+            total,
+            "加载翻译后端" if needs_translation else "审校稿已包含译文",
+        )
         if not needs_translation:
             translator = None
         elif request.inference_backend == "builtin":
             translator = HyMTTranslator(
-                self.paths.models / "hy-mt2", request.target_language, request.device
+                self.paths.models / "hy-mt2",
+                request.target_language,
+                request.device,
+                JapaneseNameDictionary(self.paths.cache),
             )
         elif request.inference_backend == "ollama":
             if not request.ollama_model.strip():
                 raise ValueError("Ollama model name is required")
-            translator = OllamaTranslator(
-                request.ollama_base_url, request.ollama_model, request.target_language
+            self._emit(emit, "translate", 0, total, "检查本地解除限制翻译模型")
+            downloaded = ensure_ollama_model(
+                request.ollama_base_url, request.ollama_model
             )
+            if downloaded:
+                self._emit(emit, "translate", 0, total, "本地翻译模型下载完成")
+            editor = OllamaTranslator(
+                request.ollama_base_url,
+                request.ollama_model,
+                request.target_language,
+                JapaneseNameDictionary(self.paths.cache),
+            )
+            if request.quality_profile == "quality":
+                model_manager = ModelManager(self.paths)
+                if not model_manager.is_ready("hy-mt2"):
+                    self._emit(emit, "translate", 0, total, "下载 Hy-MT2 独立翻译候选")
+                    model_manager.download("hy-mt2")
+                candidate = HyMTTranslator(
+                    self.paths.models / "hy-mt2",
+                    request.target_language,
+                    request.device,
+                    JapaneseNameDictionary(self.paths.cache),
+                )
+                self._emit(emit, "translate", 0, total, "启用 9B 分阶段语义审校")
+                translator = LocalQualityTranslator(editor, candidate)
+            else:
+                translator = editor
         elif request.inference_backend == "online":
             if not request.online_model.strip():
                 raise ValueError("Online model name is required")
@@ -221,6 +350,7 @@ class LocalizerPipeline:
                 request.online_model,
                 request.online_api_key,
                 request.target_language,
+                JapaneseNameDictionary(self.paths.cache),
             )
         else:
             raise ValueError(f"Unknown inference backend: {request.inference_backend}")
@@ -233,7 +363,11 @@ class LocalizerPipeline:
                     preserve_sfx=request.preserve_sfx,
                     glossary=request.glossary,
                     progress=lambda current, count: self._emit(
-                        emit, "translate", current, count, f"已翻译 {current}/{count} 页"
+                        emit,
+                        "translate",
+                        current,
+                        count,
+                        f"翻译质量进度 {current}/{count}",
                     ),
                 )
             finally:
@@ -259,7 +393,9 @@ class LocalizerPipeline:
             work / "transcript.json",
             source,
             pages,
-            translator.resolved_glossary if translator is not None else request.glossary,
+            translator.resolved_glossary
+            if translator is not None
+            else request.glossary,
         )
 
         if request.quality_profile == "quality":
@@ -272,21 +408,23 @@ class LocalizerPipeline:
                         emit, "render", 0, total, f"{message} {value}%"
                     ),
                 )
+        manifest = []
+        if request.output_format not in {"webp", "png"}:
+            raise ValueError(f"Unknown lossless output format: {request.output_format}")
         renderer = ArtworkPreservingRenderer(
             cleanup_profile=request.quality_profile,
             paths=self.paths,
             device=request.device,
         )
-        manifest = []
-        if request.output_format not in {"webp", "png"}:
-            raise ValueError(f"Unknown lossless output format: {request.output_format}")
         suffix = ".webp" if request.output_format == "webp" else ".png"
         for index, page in enumerate(pages, start=1):
             self._emit(emit, "render", index - 1, total, f"替换第 {index} 页文字")
             source_path = source / page.file
             output_path = output / f"{source_path.stem}{suffix}"
             manifest.append(
-                renderer.render_page(source_path, page, output_path, request.preserve_sfx)
+                renderer.render_page(
+                    source_path, page, output_path, request.preserve_sfx
+                )
             )
             self._emit(emit, "render", index, total, f"已生成 {output_path.name}")
 
@@ -335,7 +473,9 @@ class LocalizerPipeline:
             )
 
 
-def request_from_settings(source: Path, output: Path, settings: UserSettings) -> PipelineRequest:
+def request_from_settings(
+    source: Path, output: Path, settings: UserSettings
+) -> PipelineRequest:
     return PipelineRequest(
         source=source,
         output=output,
@@ -382,6 +522,7 @@ def page_from_dict(payload: dict) -> PageOCR:
             )
             for unit in payload["units"]
         ],
+        semantic_missing=list(payload.get("semantic_missing", [])),
     )
 
 
@@ -408,7 +549,10 @@ def completion_summary(pages: list[PageOCR], preserve_sfx: bool = False) -> dict
             else:
                 unresolved_ids.append(unit.id)
     return {
-        "total_units": translated + explicit_skips + preserved_sfx_count + len(unresolved_ids),
+        "total_units": translated
+        + explicit_skips
+        + preserved_sfx_count
+        + len(unresolved_ids),
         "translated_units": translated,
         "explicitly_skipped_units": explicit_skips,
         "preserved_sfx_units": preserved_sfx_count,

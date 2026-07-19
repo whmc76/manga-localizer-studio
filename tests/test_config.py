@@ -16,8 +16,11 @@ def test_model_caches_are_scoped(monkeypatch, tmp_path):
     for name in ("MODELSCOPE_CACHE", "HF_HOME", "PADDLE_PDX_CACHE_HOME"):
         monkeypatch.delenv(name, raising=False)
     paths = AppPaths(
-        tmp_path, tmp_path / "models", tmp_path / "cache",
-        tmp_path / "jobs", tmp_path / "settings.json"
+        tmp_path,
+        tmp_path / "models",
+        tmp_path / "cache",
+        tmp_path / "jobs",
+        tmp_path / "settings.json",
     )
     configure_model_caches(paths)
     assert os.environ["MODELSCOPE_CACHE"].startswith(str(tmp_path))

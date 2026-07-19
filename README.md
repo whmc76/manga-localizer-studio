@@ -6,7 +6,7 @@
 
 ## 实机效果：前三页对比
 
-下面三张图来自 125 页回归漫画的实际 v0.4 CLI 输出。补画、样式分析、中文排字和无损 WebP 导出均由项目流水线完成；为稳定复现故事译文，本次整书渲染导入了已审校的 `transcript.json`，并非宣称无人审校的全自动翻译。README 图片仅做等比例缩略展示，源图与成品均保持 2126×3661 原始尺寸。
+下面三张图来自 v0.5 对一部 125 页漫画的全书本地实测，使用当前项目的通用 OCR、自动人名统一、9B 上下文审校、LaMa 补画和样式重建模块；没有人工人名表，也没有调用在线 LLM API。共处理 1,285 个文字单元：替换中文 687 个、按设置保留拟声词 598 个，未解决单元 0、无效译文 0、声明区域外变化像素 0。README 只做等比例缩略展示，源图与成品均保持 2126×3661 原始尺寸。完整指标见 [`docs/benchmarks/V0.5_FULL_BOOK_REPORT.md`](docs/benchmarks/V0.5_FULL_BOOK_REPORT.md)。
 
 ![第 1 页原图与简体中文输出对比](docs/screenshots/comparisons/comparison-page-01.webp)
 
@@ -16,22 +16,23 @@
 
 ## 特性
 
-- **故事连贯**：按连续 4 页分块翻译，自动为反复出现的片假名角色名建立固定译名，并携带前文和角色语气约束；自然中文不再被过严字数门槛截断。
-- **质量优先**：默认用 Paddle 行级识别框 + Manga OCR 双重信号；浅色字/深色底标题还有通用连通组件候选回退，并用 Big-LaMa 在有界掩膜内补画背景。快速预览仍可选纯 OpenCV 路径。
+- **故事连贯**：默认携带前 6 页成稿；全书扫描反复出现的片假名角色名，通过 JMnedict 自动解析并生成一致性约束，不需要为具体作品维护人工人名表。
+- **本地质量集成**：质量模式由同一个无限制 9B 模型分阶段完成草稿、上下文裁决和语义风险复译，Hy-MT2 1.8B 提供独立候选；不下载或依赖 9B 以上模型。快速模式仍可只运行单一轻量模型。
+- **质量 OCR**：Paddle 精确框 + Manga OCR 日文识别 + 9B 整页语义校正；视觉模型报告的漏字必须经过局部放大 Paddle 重检和 Manga OCR 独立确认，粗 VLM 框永远不直接擦图。
 - **原字样式匹配**：不依赖多模态 LLM，直接分析横竖排、字号、字重、前景色、描边色/宽度、字距和展示文字占比；自动使用常规或粗体中文字体重排。
 - **保护画面**：保持原始像素尺寸，不覆盖源图；LaMa 推理后强制逐像素恢复掩膜外区域，测试验证有界编辑契约。
 - **可追踪审校**：可导入已审校 `transcript.json`；旧式 `skip: true`、残留日文假名和提示词泄漏都会被判为未解决并阻止“完成”。
 - **本地后端可组合**：翻译可选内置 Hy-MT2 或本机 Ollama；OCR 可选内置专用方案或 Ollama 视觉模型。在线兼容接口仅是显式可选项。
 - **隐私边界清晰**：本地模式不外传数据；在线模式只发送 OCR 文本和上下文，不上传图片。
 - **ModelScope 优先**：Hy-MT2 与 PaddleX 权重优先从魔搭社区获取；Manga OCR 暂无等价镜像，明确回退到上游模型源。
-- **开箱即用**：uv 创建隔离 `.venv`、按硬件安装 CPU/NVIDIA 依赖；UI 可准备所需权重，质量模式首次运行也会自动下载并校验 LaMa。
+- **开箱即用**：uv 创建隔离 `.venv`、按硬件安装 CPU/NVIDIA 依赖；UI 可准备所需权重，质量模式首次运行会自动准备 Hy-MT2、9B 本地模型和校验过的 LaMa。
 - **字体自带方案**：安装器预取固定版本的 Noto Sans CJK SC Regular/Bold；系统字体可用时直接复用。
 - **体积可控**：默认输出逐像素无损 WebP；仍可选择无损 PNG。测试封面 WebP 约为 PNG 的 59%。
 - **UI + CLI**：浏览器工作台适合日常使用，CLI 适合批量和自动化。
 
 ## 三步开始
 
-要求：Windows 10/11 或 Linux、约 8 GB 可用磁盘。推荐安装 [uv](https://docs.astral.sh/uv/)；uv 会自动准备 Python 3.12 和锁定环境。没有 uv 时仍会回退到系统 Python + pip。CPU 可以运行，NVIDIA GPU 更快。
+要求：Windows 10/11 或 Linux。轻量快速模式约需 8 GB 可用磁盘；完整本地质量模式只使用 9B 或更小的 Ollama 模型，并按阶段释放显存。推荐安装 [uv](https://docs.astral.sh/uv/)；uv 会自动准备 Python 3.12 和锁定环境。没有 uv 时仍会回退到系统 Python + pip。
 
 ### Windows
 
@@ -41,7 +42,7 @@ cd manga-localizer-studio
 .\start-windows.bat
 ```
 
-首次启动会自动完成环境安装并打开 `http://127.0.0.1:8765`。默认方案完全在本机运行；先选择 OCR/翻译后端，再点“准备缺失模型”。使用 Ollama 翻译时无需下载 Hy-MT2，使用 Ollama OCR 时无需下载 Paddle/Manga OCR。之后双击 `start-windows.bat` 即可。
+首次启动会自动完成环境安装并打开 `http://127.0.0.1:8765`。默认方案完全在本机运行；先选择 OCR/翻译后端，再点“准备缺失模型”。Ollama 的快速模式不需要 Hy-MT2；质量模式会把 Hy-MT2 作为独立候选。使用纯 Ollama OCR 时无需下载 Paddle/Manga OCR，但推荐的混合质量 OCR 需要它们。之后双击 `start-windows.bat` 即可。
 
 从旧版本更新源码后，请运行一次 `.\scripts\bootstrap.ps1 -SkipModels`（Linux 为 `./scripts/bootstrap.sh --skip-models`）同步锁定环境；已有模型权重不会重复下载。
 
@@ -77,8 +78,9 @@ CLI 与 UI 使用同一条流水线：
 
 ```bash
 manga-localizer run "D:/manga/chapter-01" -o "D:/manga/chapter-01_zh"
-manga-localizer run "D:/manga/chapter-01" -o "D:/manga/chapter-01_zh" --backend ollama --ollama-model qwen2.5:7b
-manga-localizer run "D:/manga/chapter-01" -o "D:/manga/chapter-01_zh" --ocr-backend ollama --ollama-ocr-model qwen2.5vl:7b
+manga-localizer run "D:/manga/chapter-01" -o "D:/manga/chapter-01_zh" --backend ollama --quality-profile quality
+manga-localizer run "D:/manga/chapter-01" -o "D:/manga/chapter-01_fast" --backend ollama --quality-profile fast
+manga-localizer run "D:/manga/chapter-01" -o "D:/manga/chapter-01_zh" --ocr-backend ollama --ollama-ocr-model huihui_ai/qwen3.5-abliterated:9b
 manga-localizer run "D:/manga/chapter-01" -o "D:/manga/chapter-01_png" --output-format png
 manga-localizer run "D:/manga/chapter-01" -o "D:/manga/chapter-01_final" --reviewed-transcript "D:/manga/transcript-reviewed.json"
 manga-localizer models status
@@ -97,10 +99,10 @@ flowchart LR
   B --> B2["本机 Ollama 视觉模型"]
   B1 --> C
   B2 --> C
-  C["稳定文字单元"] --> D{"翻译后端"}
-  D --> D1["内置 Hy-MT2"]
-  D --> D2["本机 Ollama"]
-  D --> D3["在线兼容 API"]
+  C["精确几何＋整页语义复核"] --> D{"翻译后端 / 质量档"}
+  D --> D1["快速：Hy-MT2 或单一 Ollama"]
+  D --> D2["质量：同一 9B 分阶段审校＋Hy-MT2 候选"]
+  D --> D3["显式可选：在线兼容 API"]
   D1 --> E
   D2 --> E
   D3 --> E
@@ -112,7 +114,7 @@ flowchart LR
 |---|---|---|
 | 文字定位 | PP-OCRv5 mobile det + server rec | PaddleX 强制 `modelscope` 源 |
 | 日文识别 | Manga OCR | 上游源回退，并在 UI 标明 |
-| 连贯翻译 | Hy-MT2 / Ollama / 在线兼容 API | 后端可选；共用连续页提示词与漏行补译 |
+| 连贯翻译 | 同一 9B 分阶段草稿/审校 + Hy-MT2 独立候选 | Ollama 自动拉取；Hy-MT2 优先 ModelScope；不使用 9B 以上模型 |
 | 画面修复 | Big-LaMa（质量）/ OpenCV（快速） | 约 196 MB，SHA-256 校验、原子下载 |
 | 样式与排字 | OpenCV 分析 + Noto CJK Regular/Bold + Pillow | 不调用 LLM，不联网 |
 
@@ -126,7 +128,7 @@ flowchart LR
 - 翻译保留稳定单元 ID，模型漏行或返回日文时逐条补译，避免气泡错位；旋转角度不再被当作跳过对白的依据。
 - 审校稿中的跳过项必须使用 `duplicate`、`noise`、`decorative` 或 `preserve` 之一作为 `skip_reason`；缺失原因的旧稿会被安全地视为未完成。
 - 模型状态、进度、历史和预览均来自真实本地 API，不使用伪造 UI 状态。
-- 专用 OCR 最适合印刷体；极端变形拟声词可改用本机 Ollama 视觉 OCR 或人工审校。无论选择哪种 OCR，补画和样式重建都不依赖 LLM。
+- 专用 OCR 最适合印刷体；极端变形拟声词默认保留原样。混合 OCR 会用本机视觉模型提高召回，但任何擦除区域仍必须由精确检测器确认。补画和样式重建不依赖 LLM。
 
 设计基线、响应式规则和逐项验收记录见 [`docs/DESIGN_CONTRACT.md`](docs/DESIGN_CONTRACT.md) 与 [`docs/PARITY_LEDGER.md`](docs/PARITY_LEDGER.md)。
 
