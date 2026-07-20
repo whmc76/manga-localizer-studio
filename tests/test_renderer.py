@@ -191,15 +191,25 @@ def test_large_outlined_cleanup_fills_only_detector_owned_boxes(tmp_path):
     assert np.array_equal(rendered[40:260, 260:340], image[40:260, 260:340])
 
 
-def test_textured_outlined_cleanup_includes_source_stroke_halo(tmp_path):
-    class MaskPaintingInpainter:
+def test_textured_outlined_cleanup_preserves_background_outside_glyphs(tmp_path):
+    class MaskRecordingInpainter:
+        def __init__(self):
+            self.mask = None
+
         def __call__(self, crop, mask):
+            self.mask = mask.copy()
             result = crop.copy()
             result[mask > 0] = (255, 0, 255)
             return result
 
     source = tmp_path / "outlined-halo.png"
-    image = np.full((300, 260, 3), 180, dtype=np.uint8)
+    gradient = np.linspace(145, 205, 260, dtype=np.uint8)[None, :, None]
+    image = np.repeat(np.repeat(gradient, 300, axis=0), 3, axis=2)
+    # Three separated glyph cores with contrasting outlines.  The background
+    # is deliberately textured so this follows the former solid-box branch.
+    for y in (65, 135, 205):
+        cv2.rectangle(image, (95, y - 18), (165, y + 18), (255, 255, 255), 8)
+        cv2.rectangle(image, (108, y - 10), (152, y + 10), (0, 0, 0), -1)
     Image.fromarray(image).save(source)
     unit = TextUnit(
         "outlined",
@@ -209,11 +219,12 @@ def test_textured_outlined_cleanup_includes_source_stroke_halo(tmp_path):
         1.0,
         False,
         "中文",
-        erase_boxes=[[80, 60, 160, 240]],
+        erase_boxes=[[80, 35, 180, 245]],
     )
     page = PageOCR(1, source.name, 260, 300, [unit])
+    inpainter = MaskRecordingInpainter()
     renderer = ArtworkPreservingRenderer(
-        cleanup_profile="quality", inpainter=MaskPaintingInpainter()
+        cleanup_profile="quality", inpainter=inpainter
     )
     renderer._draw = lambda *_args, **_kwargs: None
     renderer._analyze_style = lambda *_args: TextStyle(
@@ -222,12 +233,14 @@ def test_textured_outlined_cleanup_includes_source_stroke_halo(tmp_path):
     output = tmp_path / "outlined-halo-output.png"
     renderer.render_page(source, page, output)
     rendered = np.asarray(Image.open(output).convert("RGB"))
-    # The type-size-aware detector halo includes outline/kana pixels omitted by
-    # the OCR core rectangle, so they cannot survive behind the translation.
-    assert np.all(rendered[45:255, 30:210] == (255, 0, 255))
-    # Unrelated artwork beyond that bounded detector halo is pixel-locked.
-    assert np.array_equal(rendered[:, :20], image[:, :20])
-    assert np.array_equal(rendered[:, 225:], image[:, 225:])
+    assert inpainter.mask is not None
+    # The mask follows glyph shapes rather than filling the detector rectangle
+    # plus a type-size halo.  Most nearby screentone remains byte-identical.
+    assert np.count_nonzero(inpainter.mask) < 14_000
+    changed = np.any(rendered != image, axis=2)
+    assert changed.sum() < 14_000
+    assert np.array_equal(rendered[35:245, 45:75], image[35:245, 45:75])
+    assert np.array_equal(rendered[35:245, 185:215], image[35:245, 185:215])
 
 
 def test_renderer_preserves_detached_garment_logo_from_legacy_group(tmp_path):
@@ -239,6 +252,13 @@ def test_renderer_preserves_detached_garment_logo_from_legacy_group(tmp_path):
 
     source = tmp_path / "garment-logo.png"
     image = np.full((800, 600, 3), 180, dtype=np.uint8)
+    for x in (35, 85):
+        for y in (390, 470, 550):
+            cv2.rectangle(image, (x - 8, y - 18), (x + 28, y + 18), (255, 255, 255), 6)
+            cv2.rectangle(image, (x, y - 10), (x + 20, y + 10), (0, 0, 0), -1)
+    # Detached artwork in the legacy semantic group must not become erase
+    # authority merely because it is text-like.
+    cv2.rectangle(image, (220, 260), (500, 360), (25, 25, 25), -1)
     Image.fromarray(image).save(source)
     unit = TextUnit(
         "mixed",
@@ -265,7 +285,8 @@ def test_renderer_preserves_detached_garment_logo_from_legacy_group(tmp_path):
     output = tmp_path / "garment-logo-output.png"
     renderer.render_page(source, page, output)
     rendered = np.asarray(Image.open(output).convert("RGB"))
-    assert np.all(rendered[360:590, 30:120] == (255, 0, 255))
+    assert np.any(np.all(rendered[360:590, 20:80] == (255, 0, 255), axis=2))
+    assert np.any(np.all(rendered[360:590, 70:130] == (255, 0, 255), axis=2))
     assert np.array_equal(rendered[200:430, 180:560], image[200:430, 180:560])
 
 
