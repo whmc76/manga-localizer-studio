@@ -4,11 +4,13 @@ import base64
 import difflib
 import json
 import re
+import time
 import warnings
 from contextlib import contextmanager
 from dataclasses import asdict, dataclass, field
 from io import BytesIO
 from pathlib import Path
+from urllib.error import HTTPError, URLError
 from urllib.request import Request, urlopen
 
 import cv2
@@ -1347,49 +1349,73 @@ class OllamaVisionOCR:
             raise ValueError("An Ollama vision model is required for Ollama OCR")
 
     def _chat(self, images: list[bytes], prompt: str, schema: dict) -> dict:
-        body = json.dumps(
-            {
-                "model": self.model,
-                "stream": False,
-                "think": False,
-                "format": schema,
-                # OCR pages need bounded generation, not the model's full 262K
-                # KV cache.  A 32K working window still leaves ample room for
-                # two high-resolution images plus exhaustive JSON while keeping
-                # the local 9B path responsive on consumer GPUs.
-                "options": {
-                    "temperature": 0,
-                    "num_ctx": 32_768,
-                    "num_predict": 8192,
+        payload_base = {
+            "model": self.model,
+            "stream": False,
+            "think": False,
+            "format": schema,
+            "messages": [
+                {
+                    "role": "user",
+                    "content": prompt,
+                    "images": [
+                        base64.b64encode(content).decode("ascii")
+                        for content in images
+                    ],
+                }
+            ],
+        }
+        retry_delays = (0.5, 2.0)
+        prediction_budgets = (8192, 12_288, 16_384)
+        for attempt in range(len(retry_delays) + 1):
+            body = json.dumps(
+                {
+                    **payload_base,
+                    # OCR pages need bounded generation, not the model's full
+                    # 262K KV cache. Escalating the output budget only after a
+                    # truncated response keeps ordinary pages responsive while
+                    # allowing a transiently verbose structured generation to
+                    # recover without accepting partial JSON.
+                    "options": {
+                        "temperature": 0,
+                        "num_ctx": 32_768,
+                        "num_predict": prediction_budgets[attempt],
+                    },
                 },
-                "messages": [
-                    {
-                        "role": "user",
-                        "content": prompt,
-                        "images": [
-                            base64.b64encode(content).decode("ascii")
-                            for content in images
-                        ],
-                    }
-                ],
-            },
-            ensure_ascii=False,
-        ).encode("utf-8")
-        request = Request(
-            f"{self.base_url}/api/chat",
-            data=body,
-            headers={"Content-Type": "application/json"},
-            method="POST",
-        )
-        try:
-            with urlopen(request, timeout=self.timeout) as response:
-                payload = json.loads(response.read().decode("utf-8"))
-        except Exception as exc:
-            raise RuntimeError(f"Ollama OCR request failed: {exc}") from exc
-        if payload.get("done_reason") == "length":
-            raise RuntimeError(
-                "Ollama OCR output was truncated before valid JSON completed"
+                ensure_ascii=False,
+            ).encode("utf-8")
+            request = Request(
+                f"{self.base_url}/api/chat",
+                data=body,
+                headers={"Content-Type": "application/json"},
+                method="POST",
             )
+            try:
+                with urlopen(request, timeout=self.timeout) as response:
+                    payload = json.loads(response.read().decode("utf-8"))
+                if payload.get("done_reason") == "length":
+                    if attempt < len(retry_delays):
+                        time.sleep(retry_delays[attempt])
+                        continue
+                    raise RuntimeError(
+                        "Ollama OCR output was truncated before valid JSON completed "
+                        f"after budgets {', '.join(map(str, prediction_budgets))}"
+                    )
+                break
+            except HTTPError as exc:
+                detail = exc.read(2000).decode("utf-8", errors="replace").strip()
+                if exc.code >= 500 and attempt < len(retry_delays):
+                    time.sleep(retry_delays[attempt])
+                    continue
+                message = f"HTTP {exc.code}: {detail or exc.reason}"
+                raise RuntimeError(f"Ollama OCR request failed: {message}") from exc
+            except (URLError, TimeoutError, OSError) as exc:
+                if attempt < len(retry_delays):
+                    time.sleep(retry_delays[attempt])
+                    continue
+                raise RuntimeError(f"Ollama OCR request failed: {exc}") from exc
+            except Exception as exc:
+                raise RuntimeError(f"Ollama OCR request failed: {exc}") from exc
         content = str(payload.get("message", {}).get("content", ""))
         return self._json_payload(content)
 
