@@ -20,6 +20,9 @@ from .sfx import lookup_sfx
 
 
 LINE_RE = re.compile(r"^\s*\[([^\]]+)\]\s*(.+?)\s*$")
+SPLIT_ID_RE = re.compile(
+    r"^\s*(?:\[id\]\s*)?\[?(p\d+u\d+)\]?\s*(.*?)\s*$", re.IGNORECASE
+)
 # Japanese letters and prolonged sound mark, excluding shared punctuation such
 # as the middle dot (・), which is valid in otherwise Chinese typesetting.
 KANA_RE = re.compile(r"[ぁ-ゖァ-ヺーヽヾ]")
@@ -39,9 +42,18 @@ SEMANTIC_RISK_RE = re.compile(
     r"から|けど|のに|ても|させ|られ|れる|れば|なら|つもり|はず|乗せ|"
     r"処女マン|マンコ|：|のかよ|なのか|いんだろ|いるんだろ|笑|ゲーム"
 )
-TARGET_NEGATION_RE = re.compile(r"不|没|别|无|勿|莫|不能|不要|不可|难以|算了|拒绝")
+TARGET_NEGATION_RE = re.compile(
+    r"不|没|别|无|勿|莫|不能|不要|不可|难以|算了|拒绝|"
+    r"怎么可能|哪有|哪会|哪能|何来|谁会"
+)
+TARGET_RESTRICTION_RE = re.compile(r"只|仅|唯|不过|除(?:了|非)")
 GENERAL_TERMS = {"キス": "亲吻"}
-ADULT_TERMS = {"中出し": "内射", "イキ": "高潮", "絶頂": "高潮"}
+ADULT_TERMS = {
+    "中出し": "内射",
+    "イキ": "高潮",
+    "絶頂": "高潮",
+    "コンドーム": "避孕套",
+}
 DEFAULT_LOCAL_TRANSLATION_MODEL = "huihui_ai/qwen3.5-abliterated:9b"
 LOCAL_MODEL_MAX_BILLIONS = 9.0
 INTERJECTION_VOICE_MAP = {
@@ -240,6 +252,48 @@ class PromptTranslator:
         match = LINE_RE.match(line)
         return (match.group(2) if match else line).strip(' "“”')
 
+    def _parse_indexed_translations(
+        self, text: str, expected_ids: Iterable[str]
+    ) -> dict[str, str]:
+        """Parse both inline ids and Hy-MT2's split ``[id]`` response shape.
+
+        Hy-MT2 commonly renders ``[p001u01] text`` as two lines:
+        ``[id]p001u01`` followed by the translation.  Treating only the inline
+        form as valid silently discarded every contextual batch candidate and
+        forced the pipeline back to isolated one-line translation.
+        """
+        allowed = set(expected_ids)
+        parsed: dict[str, str] = {}
+        pending_id = ""
+
+        def clean_candidate(candidate: str) -> str:
+            return self._normalize_translation(
+                re.sub(r"^\s*[:：]\s*", "", candidate)
+            )
+
+        for raw_line in text.splitlines():
+            line = raw_line.strip()
+            if not line or line in {"```", "```text", "```plaintext"}:
+                continue
+            inline = LINE_RE.match(line)
+            if inline and inline.group(1) in allowed:
+                parsed[inline.group(1)] = clean_candidate(inline.group(2))
+                pending_id = ""
+                continue
+            split = SPLIT_ID_RE.match(line)
+            if split and split.group(1) in allowed:
+                unit_id, candidate = split.groups()
+                if candidate:
+                    parsed[unit_id] = clean_candidate(candidate)
+                    pending_id = ""
+                else:
+                    pending_id = unit_id
+                continue
+            if pending_id:
+                parsed[pending_id] = clean_candidate(line)
+                pending_id = ""
+        return parsed
+
     @classmethod
     def _needs_translation(cls, unit: TextUnit, preserve_sfx: bool) -> bool:
         return (
@@ -248,16 +302,33 @@ class PromptTranslator:
             and not cls._valid_translation(unit, unit.zh)
         )
 
+    @staticmethod
+    def _source_term_present(source: str, text: str) -> bool:
+        """Match one glossary term even when manga ellipses split the word."""
+        if source in text:
+            return True
+        punctuation = r"[\s.．。…、，,!?！？:：♡♥〰〜～・]"
+        return bool(source) and re.sub(punctuation, "", source) in re.sub(
+            punctuation, "", text
+        )
+
     def _respects_glossary(
         self, unit: TextUnit, text: str, glossary: dict[str, str]
     ) -> bool:
+        active_targets = {
+            target
+            for source, target in glossary.items()
+            if self._source_term_present(source, unit.ja)
+        }
         for source, target in glossary.items():
-            if source in unit.ja and target not in text:
+            source_present = self._source_term_present(source, unit.ja)
+            if source_present and not self._source_term_present(target, text):
                 return False
             if (
-                source not in unit.ja
+                not source_present
                 and source in self.inferred_glossary
-                and target in text
+                and self._source_term_present(target, text)
+                and target not in active_targets
             ):
                 return False
         return True
@@ -332,7 +403,14 @@ class PromptTranslator:
         source_has_negation = bool(
             re.search(r"ない|なく|ません|無理|だめ|駄目|じゃない|ではない", unit.ja)
         )
-        if source_has_negation and not TARGET_NEGATION_RE.search(candidate):
+        source_is_restrictive = bool(
+            re.search(r"しか.{0,24}(?:ない|なく|ません)", unit.ja, re.S)
+        )
+        if (
+            source_has_negation
+            and not TARGET_NEGATION_RE.search(candidate)
+            and not (source_is_restrictive and TARGET_RESTRICTION_RE.search(candidate))
+        ):
             return False
         target_is_question = bool(
             re.search(
@@ -484,7 +562,9 @@ class PromptTranslator:
     ) -> dict[str, str]:
         names = self._recurring_katakana_names(pages)
         missing_names = [
-            name for name in names if not any(name in source for source in glossary)
+            name
+            for name in names
+            if not any(self._source_term_present(name, source) for source in glossary)
         ]
         inferred = {
             source: target for source, target in glossary.items() if source in names
@@ -493,14 +573,22 @@ class PromptTranslator:
         builtins = {
             source: target
             for source, target in GENERAL_TERMS.items()
-            if any(source in unit.ja for page in pages for unit in page.units)
+            if any(
+                self._source_term_present(source, unit.ja)
+                for page in pages
+                for unit in page.units
+            )
         }
         if "成人漫画" in self.translation_register:
             builtins.update(
                 {
                     source: target
                     for source, target in ADULT_TERMS.items()
-                    if any(source in unit.ja for page in pages for unit in page.units)
+                    if any(
+                        self._source_term_present(source, unit.ja)
+                        for page in pages
+                        for unit in page.units
+                    )
                 }
             )
         self.inferred_glossary = dict(inferred)
@@ -599,8 +687,10 @@ class PromptTranslator:
         raw = self._first_line(self._generate_repair(prompt, max_new_tokens=8))
         match = re.search(r"\d+", raw)
         selected = int(match.group()) if match else 0
-        if selected == 0:
-            return ""
+        # A confirmed recurring reading plus a JMnedict candidate is stronger
+        # evidence than a lightweight translation model's failure to follow
+        # the numeric selection prompt.  Fall back to the deterministic rank
+        # instead of dropping the whole-book name constraint.
         candidate = ranked[selected - 1] if 1 <= selected <= len(ranked) else ranked[0]
         return OpenCC("t2s").convert(candidate.written)
 
@@ -705,16 +795,11 @@ class PromptTranslator:
 严格保留每行开头的[id]，一条输入对应一条输出，不合并、不遗漏。只输出[id]和译文。
 
 {chr(10).join(source_rows)}"""
-            translated: dict[str, str] = {}
             token_budget = min(1600, max(256, sum(len(unit.ja) for unit in units) * 3))
-            for line in self._generate(
-                prompt, max_new_tokens=token_budget
-            ).splitlines():
-                match = LINE_RE.match(line)
-                if match:
-                    translated[match.group(1)] = self._normalize_translation(
-                        match.group(2)
-                    )
+            translated = self._parse_indexed_translations(
+                self._generate(prompt, max_new_tokens=token_budget),
+                (unit.id for unit in units),
+            )
             candidate_sources: dict[str, set[str]] = {}
             for unit in units:
                 candidate = translated.get(unit.id, "").strip()
@@ -756,7 +841,7 @@ class PromptTranslator:
             "；".join(
                 f"{source}译为{target}"
                 for source, target in glossary.items()
-                if source in unit.ja
+                if self._source_term_present(source, unit.ja)
             )
             or "无"
         )
@@ -1142,19 +1227,14 @@ class OllamaTranslator(PromptTranslator):
 {chr(10).join(rows)}
 
 只输出[id]和最终中文。"""
-            reviewed: dict[str, str] = {}
             token_budget = min(
                 2200,
                 max(384, sum(len(unit.ja) + len(unit.zh) for unit in units) * 3),
             )
-            for line in self._generate(
-                prompt, max_new_tokens=token_budget
-            ).splitlines():
-                match = LINE_RE.match(line)
-                if match:
-                    reviewed[match.group(1)] = self._normalize_translation(
-                        match.group(2)
-                    )
+            reviewed = self._parse_indexed_translations(
+                self._generate(prompt, max_new_tokens=token_budget),
+                (unit.id for unit in units),
+            )
             candidate_sources: dict[str, set[str]] = {}
             for unit in units:
                 candidate = reviewed.get(unit.id, "").strip()

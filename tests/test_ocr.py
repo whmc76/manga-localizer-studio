@@ -25,6 +25,7 @@ from manga_localizer.ocr import (
     manga_force_cpu,
     merge_region_candidates,
     merge_semantic_missing,
+    overlapping_sfx_echo,
     prefer_semantic_ocr,
     prune_nested_duplicate_units,
     prune_detached_orthogonal_outliers,
@@ -117,6 +118,38 @@ def test_tiny_ruby_or_ocr_fragment_repeated_in_larger_unit_is_preserved():
     )
     page.units.append(repeated_dialogue)
     assert duplicate_tiny_fragment(page, repeated_dialogue) is False
+
+
+def test_short_katakana_echo_inside_confirmed_non_dialogue_region_is_duplicate():
+    effect = TextUnit(
+        "p002u03",
+        [809, 1423, 1631, 2199],
+        [790, 1400, 1650, 2220],
+        "カチカチ",
+        0.96,
+        is_sfx=False,
+        skip=True,
+        skip_reason="preserve",
+        special="artwork_text",
+    )
+    echo = TextUnit(
+        "p002u06",
+        [1579, 1972, 1739, 2200],
+        [1569, 1962, 1749, 2210],
+        "カナ、",
+        0.85,
+    )
+    unrelated_name = TextUnit(
+        "p002u07",
+        [100, 2500, 260, 2750],
+        [90, 2490, 270, 2760],
+        "サナ、",
+        0.9,
+    )
+    page = PageOCR(2, "002.png", 2126, 3661, [effect, echo, unrelated_name])
+
+    assert overlapping_sfx_echo(page, echo) is True
+    assert overlapping_sfx_echo(page, unrelated_name) is False
 
 
 def test_horizontal_vlm_echo_yields_to_detailed_vertical_detector_boxes():

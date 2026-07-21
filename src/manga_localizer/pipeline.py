@@ -66,6 +66,19 @@ def unsafe_semantic_missing(page: PageOCR, preserve_sfx: bool) -> list[dict]:
     return unsafe
 
 
+def merge_glossaries(
+    imported: object, explicit: dict[str, str] | None
+) -> dict[str, str]:
+    """Merge a transcript glossary with explicit request overrides."""
+    imported = imported or {}
+    if not isinstance(imported, dict) or not all(
+        isinstance(source, str) and isinstance(target, str)
+        for source, target in imported.items()
+    ):
+        raise ValueError("Reviewed transcript glossary must map strings to strings")
+    return {**imported, **(explicit or {})}
+
+
 @dataclass
 class PipelineRequest:
     source: Path
@@ -185,10 +198,15 @@ class LocalizerPipeline:
         work.mkdir(parents=True, exist_ok=True)
 
         pages: list[PageOCR] = []
+        glossary = dict(request.glossary or {})
         total = len(files)
         if request.reviewed_transcript:
             transcript_path = request.reviewed_transcript.expanduser().resolve()
             payload = json.loads(transcript_path.read_text(encoding="utf-8"))
+            # The transcript is the portable source of truth for a reviewed
+            # book. Explicit request terms still win when callers intentionally
+            # override one spelling for a new render.
+            glossary = merge_glossaries(payload.get("glossary"), glossary)
             pages = [page_from_dict(item) for item in payload["pages"]]
             self._validate_reviewed_pages(files, pages)
             self._emit(
@@ -361,7 +379,7 @@ class LocalizerPipeline:
                     context_pages=max(0, min(12, request.context_pages)),
                     story_context=request.story_context,
                     preserve_sfx=request.preserve_sfx,
-                    glossary=request.glossary,
+                    glossary=glossary,
                     progress=lambda current, count: self._emit(
                         emit,
                         "translate",
@@ -379,7 +397,7 @@ class LocalizerPipeline:
                 )
         else:
             self._write_transcript(
-                work / "translation-draft.json", source, pages, request.glossary
+                work / "translation-draft.json", source, pages, glossary
             )
         quality = completion_summary(pages, request.preserve_sfx)
         if quality["unresolved_units"]:
@@ -395,7 +413,7 @@ class LocalizerPipeline:
             pages,
             translator.resolved_glossary
             if translator is not None
-            else request.glossary,
+            else glossary,
         )
 
         if request.quality_profile == "quality":

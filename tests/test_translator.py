@@ -223,6 +223,24 @@ def test_chunk_translation_reports_incremental_page_progress():
     assert updates == [(2, 5), (4, 5), (5, 5)]
 
 
+def test_context_batch_parser_accepts_hymt_split_id_lines():
+    service = PromptTranslator()
+    output = """[id]p001u01
+：这里是
+
+[id]p001u02
+我们的秘密基地
+[p001u03] 很好哦"""
+
+    assert service._parse_indexed_translations(
+        output, ["p001u01", "p001u02", "p001u03"]
+    ) == {
+        "p001u01": "这里是",
+        "p001u02": "我们的秘密基地",
+        "p001u03": "很好哦",
+    }
+
+
 def test_translation_quality_gate_rejects_kana_and_context_leakage():
     unit = TextUnit("p001u01", [0, 0, 20, 20], [0, 0, 20, 20], "ガク君", 1.0)
     assert PromptTranslator._valid_translation(unit, "岳君") is True
@@ -394,6 +412,21 @@ def test_inferred_name_is_rejected_when_it_leaks_into_an_unrelated_line():
     service.inferred_glossary = {"ガク": "格克"}
     unit = TextUnit("p001u01", [0, 0, 20, 20], [0, 0, 20, 20], "勇気", 1.0)
     assert service._respects_glossary(unit, "格克勇气", {"ガク": "格克"}) is False
+
+
+def test_glossary_matches_a_word_split_by_manga_ellipses():
+    service = PromptTranslator()
+    unit = TextUnit(
+        "p080u01",
+        [0, 0, 20, 20],
+        [0, 0, 20, 20],
+        "え？コン．．．ドーム？．．．",
+        1.0,
+    )
+    glossary = {"コンドーム": "避孕套"}
+    assert service._source_term_present("コンドーム", unit.ja) is True
+    assert service._respects_glossary(unit, "诶？避……孕套？", glossary) is True
+    assert service._respects_glossary(unit, "诶？康……多姆？", glossary) is False
 
 
 def test_plain_recurring_katakana_name_is_detected_across_pages_but_sfx_is_not():
@@ -691,6 +724,40 @@ def test_semantic_audit_cannot_drop_source_negation():
     )
     assert OllamaTranslator._preserves_audit_information(unit, "插到底") is False
     assert OllamaTranslator._preserves_audit_information(unit, "别插到底") is True
+
+
+def test_semantic_audit_accepts_chinese_restriction_for_shika_nai():
+    unit = TextUnit(
+        "p080u02",
+        [0, 0, 20, 80],
+        [0, 0, 20, 80],
+        "僕画像でしか見たことないけど．．",
+        1.0,
+    )
+    assert (
+        OllamaTranslator._preserves_audit_information(
+            unit, "我只在图片里见过……"
+        )
+        is True
+    )
+    assert OllamaTranslator._preserves_audit_information(unit, "我见过图片……") is False
+
+
+def test_semantic_audit_accepts_chinese_rhetorical_negation():
+    unit = TextUnit(
+        "p114u03",
+        [0, 0, 20, 80],
+        [0, 0, 20, 80],
+        "コンドームなんて持ってるわけないかっ",
+        1.0,
+    )
+    assert (
+        OllamaTranslator._preserves_audit_information(
+            unit, "怎么可能会带着避孕套啊！"
+        )
+        is True
+    )
+    assert OllamaTranslator._preserves_audit_information(unit, "带着避孕套啊！") is False
 
 
 def test_semantic_gate_preserves_implicit_questions_and_relationship_possession():
