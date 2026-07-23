@@ -384,13 +384,14 @@ class ArtworkPreservingRenderer:
         # thick white outline. Each detector-owned box remains independent, so
         # the wider title halo cannot turn the semantic group union into a mask.
         dilation = self._mask_dilation(unit, style)
-        # A foreground-only component mask removes the dark glyph core but can
-        # leave the contrasting source outline behind as a conspicuous white
-        # silhouette.  On textured artwork, every confirmed outlined-text box
-        # therefore becomes an independent LaMa region.  The detector boxes,
-        # not their semantic union, remain the destructive authority.
-        solid_source_boxes = style.outlined and (
-            style.background_std >= 10 or style.display or unit.special == "cover_title"
+        # Prefer a glyph-shaped mask even on textured artwork.  Filling every
+        # outlined detector rectangle makes LaMa synthesize far more of the
+        # panel than the source text occupied, which softens screentone and
+        # line art.  A tight detector rectangle remains a last-resort fallback
+        # only for exceptionally large non-display lettering whose glyph core
+        # can merge with the artwork threshold.
+        solid_source_boxes = (
+            style.outlined and style.font_size >= 120 and not style.display
         )
         for source_box in source_boxes:
             sx0 = max(x0, source_box[0]) - rx0
@@ -401,32 +402,10 @@ class ArtworkPreservingRenderer:
                 continue
             pad_x = min(32, max(8, round((sx1 - sx0) * 0.08)))
             pad_y = min(32, max(8, round((sy1 - sy0) * 0.06)))
-            if solid_source_boxes:
-                # OCR rectangles frequently stop at the dark glyph core and
-                # can omit small kana or the outer half of a thick contrasting
-                # stroke.  Scale the cleanup halo from the measured type size
-                # instead of the detector rectangle alone.  The cap keeps
-                # separate columns separate, while the wider halo closes the
-                # small inter-box gaps in one outlined text cluster.
-                outline_pad = min(64, max(16, round(style.font_size * 0.72)))
-                pad_x = max(pad_x, outline_pad)
-                pad_y = max(pad_y, outline_pad)
             bx0, by0 = max(0, sx0 - pad_x), max(0, sy0 - pad_y)
             bx1, by1 = min(crop.shape[1], sx1 + pad_x), min(crop.shape[0], sy1 + pad_y)
-            # On dark or highly textured artwork, opposite-polarity outlined
-            # display text can be connected to the background in either the
-            # black or white threshold.  Pixel-component selection then keeps
-            # only pieces of the original glyph and LaMa faithfully recreates
-            # the visible remainder.  For genuinely large outlined lettering,
-            # the detector-owned rectangles are the safer source of truth.
-            # Fill each rectangle independently; never fill their semantic
-            # union, which may contain faces or other panel artwork.
             if solid_source_boxes:
-                # Include the detector halo because the contrasting outline and
-                # nearby kana can sit outside the reported dark glyph core.
-                # Padding remains bounded per detector box rather than filling
-                # the semantic union, which may contain unrelated artwork.
-                mask[by0:by1, bx0:bx1] = 255
+                mask[sy0:sy1, sx0:sx1] = 255
                 continue
             local = self._text_mask(crop[by0:by1, bx0:bx1], style, dilation)
             mask[by0:by1, bx0:bx1] = np.maximum(mask[by0:by1, bx0:bx1], local)

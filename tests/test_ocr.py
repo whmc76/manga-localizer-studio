@@ -2,7 +2,9 @@ import io
 import json
 import warnings
 from pathlib import Path
+from urllib.error import HTTPError
 
+import pytest
 from PIL import Image, ImageDraw
 
 from manga_localizer.ocr import (
@@ -23,6 +25,7 @@ from manga_localizer.ocr import (
     manga_force_cpu,
     merge_region_candidates,
     merge_semantic_missing,
+    overlapping_sfx_echo,
     prefer_semantic_ocr,
     prune_nested_duplicate_units,
     prune_detached_orthogonal_outliers,
@@ -115,6 +118,38 @@ def test_tiny_ruby_or_ocr_fragment_repeated_in_larger_unit_is_preserved():
     )
     page.units.append(repeated_dialogue)
     assert duplicate_tiny_fragment(page, repeated_dialogue) is False
+
+
+def test_short_katakana_echo_inside_confirmed_non_dialogue_region_is_duplicate():
+    effect = TextUnit(
+        "p002u03",
+        [809, 1423, 1631, 2199],
+        [790, 1400, 1650, 2220],
+        "カチカチ",
+        0.96,
+        is_sfx=False,
+        skip=True,
+        skip_reason="preserve",
+        special="artwork_text",
+    )
+    echo = TextUnit(
+        "p002u06",
+        [1579, 1972, 1739, 2200],
+        [1569, 1962, 1749, 2210],
+        "カナ、",
+        0.85,
+    )
+    unrelated_name = TextUnit(
+        "p002u07",
+        [100, 2500, 260, 2750],
+        [90, 2490, 270, 2760],
+        "サナ、",
+        0.9,
+    )
+    page = PageOCR(2, "002.png", 2126, 3661, [effect, echo, unrelated_name])
+
+    assert overlapping_sfx_echo(page, echo) is True
+    assert overlapping_sfx_echo(page, unrelated_name) is False
 
 
 def test_horizontal_vlm_echo_yields_to_detailed_vertical_detector_boxes():
@@ -809,6 +844,118 @@ def test_ollama_vision_ocr_uses_local_image_endpoint(monkeypatch, tmp_path):
     assert captured["body"]["messages"][0]["images"]
     assert page.units[0].bbox == [40, 120, 160, 300]
     assert page.units[0].id == "p002u01"
+
+
+def test_ollama_vision_ocr_retries_transient_server_error(monkeypatch, tmp_path):
+    source = tmp_path / "page.png"
+    Image.new("RGB", (400, 600), "white").save(source)
+    response_payload = {
+        "message": {
+            "content": json.dumps(
+                {"regions": []},
+                ensure_ascii=False,
+            )
+        }
+    }
+    calls = []
+
+    def flaky_urlopen(request, timeout):
+        calls.append((request.full_url, timeout))
+        if len(calls) == 1:
+            raise HTTPError(
+                request.full_url,
+                500,
+                "Internal Server Error",
+                hdrs=None,
+                fp=io.BytesIO(b'{"error":"model runner unexpectedly stopped"}'),
+            )
+        return io.BytesIO(json.dumps(response_payload).encode("utf-8"))
+
+    monkeypatch.setattr("manga_localizer.ocr.urlopen", flaky_urlopen)
+    monkeypatch.setattr("manga_localizer.ocr.time.sleep", lambda _delay: None)
+
+    page = OllamaVisionOCR("http://127.0.0.1:11434", "vision-local").analyze(
+        source, 2
+    )
+
+    assert page.units == []
+    assert len(calls) == 2
+
+
+def test_ollama_vision_ocr_surfaces_non_retryable_error_detail(monkeypatch, tmp_path):
+    source = tmp_path / "page.png"
+    Image.new("RGB", (400, 600), "white").save(source)
+    calls = []
+
+    def rejected_urlopen(request, timeout):
+        calls.append((request.full_url, timeout))
+        raise HTTPError(
+            request.full_url,
+            400,
+            "Bad Request",
+            hdrs=None,
+            fp=io.BytesIO(b'{"error":"model does not support images"}'),
+        )
+
+    monkeypatch.setattr("manga_localizer.ocr.urlopen", rejected_urlopen)
+
+    with pytest.raises(RuntimeError, match="model does not support images"):
+        OllamaVisionOCR("http://127.0.0.1:11434", "text-only").analyze(source, 2)
+
+    assert len(calls) == 1
+
+
+def test_ollama_vision_ocr_retries_truncated_structured_output(
+    monkeypatch, tmp_path
+):
+    source = tmp_path / "page.png"
+    Image.new("RGB", (400, 600), "white").save(source)
+    calls = []
+
+    def truncated_then_complete(request, timeout):
+        body = json.loads(request.data.decode("utf-8"))
+        calls.append((body["options"]["num_predict"], timeout))
+        if len(calls) == 1:
+            payload = {
+                "done_reason": "length",
+                "message": {"content": '{"regions":['},
+            }
+        else:
+            payload = {"done_reason": "stop", "message": {"content": '{"regions":[]}'}}
+        return io.BytesIO(json.dumps(payload).encode("utf-8"))
+
+    monkeypatch.setattr("manga_localizer.ocr.urlopen", truncated_then_complete)
+    monkeypatch.setattr("manga_localizer.ocr.time.sleep", lambda _delay: None)
+
+    page = OllamaVisionOCR("http://127.0.0.1:11434", "vision-local").analyze(
+        source, 2
+    )
+
+    assert page.units == []
+    assert [budget for budget, _timeout in calls] == [8192, 12_288]
+
+
+def test_ollama_vision_ocr_rejects_repeated_truncation(monkeypatch, tmp_path):
+    source = tmp_path / "page.png"
+    Image.new("RGB", (400, 600), "white").save(source)
+    budgets = []
+
+    def always_truncated(request, timeout):
+        body = json.loads(request.data.decode("utf-8"))
+        budgets.append(body["options"]["num_predict"])
+        payload = {
+            "done_reason": "length",
+            "message": {"content": '{"regions":['},
+        }
+        return io.BytesIO(json.dumps(payload).encode("utf-8"))
+
+    monkeypatch.setattr("manga_localizer.ocr.urlopen", always_truncated)
+    monkeypatch.setattr("manga_localizer.ocr.time.sleep", lambda _delay: None)
+
+    with pytest.raises(RuntimeError, match="8192, 12288, 16384"):
+        OllamaVisionOCR("http://127.0.0.1:11434", "vision-local").analyze(source, 2)
+
+    assert budgets == [8192, 12_288, 16_384]
 
 
 def test_tight_crop_audit_does_not_overwrite_confident_sfx(monkeypatch, tmp_path):

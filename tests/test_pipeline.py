@@ -7,9 +7,18 @@ from manga_localizer.pipeline import (
     OCR_CACHE_VERSION,
     LocalizerPipeline,
     completion_summary,
+    merge_glossaries,
     page_from_dict,
     unsafe_semantic_missing,
 )
+
+
+def test_reviewed_transcript_glossary_survives_with_explicit_overrides():
+    assert merge_glossaries(
+        {"サナ": "佐奈", "ガク": "岳"}, {"ガク": "学"}
+    ) == {"サナ": "佐奈", "ガク": "学"}
+    with pytest.raises(ValueError, match="map strings to strings"):
+        merge_glossaries(["サナ", "佐奈"], None)
 
 
 def test_legacy_skip_is_imported_as_unresolved_instead_of_completed():
