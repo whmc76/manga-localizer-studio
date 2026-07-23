@@ -12,11 +12,11 @@
   <div class="app-shell" data-testid="app-shell">
     <aside class="sidebar" data-testid="sidebar">
       <div class="brand"><span class="brand-mark">漫</span><span><b>Manga Localizer</b><small>STUDIO</small></span></div>
-      <nav aria-label="主导航">
-        <button class="nav-item active" data-view="workspace"><span>＋</span><b>新建项目</b></button>
-        <button class="nav-item" data-view="history"><span>◷</span><b>任务记录</b></button>
-        <button class="nav-item" data-view="models"><span>⬡</span><b>模型管理</b></button>
-        <button class="nav-item" data-view="settings"><span>⚙</span><b>设置</b></button>
+      <nav aria-label="主导航" data-i18n-aria-label="nav.main">
+        <button class="nav-item active" data-view="workspace"><span>＋</span><b data-i18n="nav.workspace">新建项目</b></button>
+        <button class="nav-item" data-view="history"><span>◷</span><b data-i18n="nav.history">任务记录</b></button>
+        <button class="nav-item" data-view="models"><span>⬡</span><b data-i18n="nav.models">模型管理</b></button>
+        <button class="nav-item" data-view="settings"><span>⚙</span><b data-i18n="nav.settings">设置</b></button>
       </nav>
       <div class="local-note"><span></span><div><b id="privacyBadgeTitle">本地模式</b><small id="privacyBadgeDetail">数据不会离开设备</small></div></div>
       <p id="versionLabel" class="version">MIT License</p>
@@ -24,99 +24,99 @@
 
     <main class="main-shell">
       <header class="topbar" data-testid="topbar">
-        <div><h1 id="pageTitle">漫画本地化工作台</h1><p>导入图片，自动识别并生成连贯的中文版本</p></div>
-        <div class="top-actions"><a class="icon-button" href="https://github.com/whmc76/manga-localizer-studio" target="_blank" rel="noreferrer" aria-label="打开 GitHub">⌁</a><span class="avatar">ML</span></div>
+        <div><h1 id="pageTitle" data-i18n="app.title">漫画本地化工作台</h1><p data-i18n="app.subtitle">导入图片，自动识别并生成连贯的本地化版本</p></div>
+        <div class="top-actions"><select id="uiLanguage" class="language-picker" aria-label="界面语言" data-i18n-aria-label="language.label"><option value="zh-CN">中文</option><option value="ja-JP">日本語</option><option value="en-US">English</option></select><a class="icon-button" href="https://github.com/whmc76/manga-localizer-studio" target="_blank" rel="noreferrer" aria-label="打开 GitHub" data-i18n-aria-label="app.github">⌁</a><span class="avatar">ML</span></div>
       </header>
 
       <div class="page-content">
         <section id="workspaceView" class="view active" data-view-panel="workspace">
           <section class="panel setup-panel" data-testid="project-setup">
-            <div class="section-title"><span><em>01</em> 项目设置</span><button id="exampleButton" class="text-button">查看快速上手</button></div>
+            <div class="section-title"><span><em>01</em> <span data-i18n="setup.title">项目设置</span></span><button id="exampleButton" class="text-button" data-i18n="setup.quickStart">查看快速上手</button></div>
             <div class="setup-grid">
-              <label><span>源图片文件夹</span><div class="path-field"><i>▰</i><input id="sourcePath" autocomplete="off" placeholder="选择包含漫画图片的文件夹"><button id="sourcePicker">选择文件夹</button></div></label>
-              <label><span>输出目录</span><div class="path-field"><i>▱</i><input id="outputPath" autocomplete="off" placeholder="不会覆盖源图片"><button id="outputPicker">选择文件夹</button></div></label>
-              <label><span>目标语言</span><select id="targetLanguage"><option>简体中文</option><option>繁体中文</option><option>English</option></select></label>
+              <label><span data-i18n="setup.source">源图片文件夹</span><div class="path-field"><i>▰</i><input id="sourcePath" autocomplete="off" placeholder="选择包含漫画图片的文件夹" data-i18n-placeholder="setup.source.placeholder"><button id="sourcePicker" data-i18n="setup.pickFolder">选择文件夹</button></div></label>
+              <label><span data-i18n="setup.output">输出目录</span><div class="path-field"><i>▱</i><input id="outputPath" autocomplete="off" placeholder="不会覆盖源图片" data-i18n-placeholder="setup.output.placeholder"><button id="outputPicker" data-i18n="setup.pickFolder">选择文件夹</button></div></label>
+              <label><span data-i18n="setup.target">目标语言</span><select id="targetLanguage"><option value="简体中文" data-i18n="target.zhHans">简体中文</option><option value="繁体中文" data-i18n="target.zhHant">繁体中文</option><option value="English" data-i18n="target.english">English</option></select></label>
             </div>
-            <details class="review-import"><summary>高级：导入已审校 transcript.json</summary><input id="reviewedTranscript" autocomplete="off" placeholder="可选；导入后跳过 OCR 和翻译，直接安全重排" oninput="updateStartState()"></details>
+            <details class="review-import"><summary data-i18n="setup.reviewed">高级：导入已审校 transcript.json</summary><input id="reviewedTranscript" autocomplete="off" placeholder="可选；导入后跳过 OCR 和翻译，直接安全重排" data-i18n-placeholder="setup.reviewed.placeholder" oninput="updateStartState()"></details>
           </section>
 
           <section class="panel pipeline-panel" data-testid="pipeline">
-            <div class="section-title"><span><em>02</em> 本地化流程</span><small id="pipelineEstimate">等待开始</small></div>
+            <div class="section-title"><span><em>02</em> <span data-i18n="pipeline.title">本地化流程</span></span><small id="pipelineEstimate" data-i18n="pipeline.waiting">等待开始</small></div>
             <div class="pipeline-steps">
-              <div class="pipeline-step" data-phase="detect"><i>1</i><span><b>文字检测</b><small>定位文字区域</small></span></div><div class="step-line"></div>
-              <div class="pipeline-step" data-phase="ocr"><i>2</i><span><b>漫画 OCR</b><small>读取日文内容</small></span></div><div class="step-line"></div>
-              <div class="pipeline-step" data-phase="translate"><i>3</i><span><b>连贯翻译</b><small>参考前后页面</small></span></div><div class="step-line"></div>
-              <div class="pipeline-step" data-phase="render"><i>4</i><span><b>原位替换</b><small>保留原始尺寸</small></span></div>
+              <div class="pipeline-step" data-phase="detect"><i>1</i><span><b data-i18n="pipeline.detect">文字检测</b><small data-i18n="pipeline.detect.detail">定位文字区域</small></span></div><div class="step-line"></div>
+              <div class="pipeline-step" data-phase="ocr"><i>2</i><span><b data-i18n="pipeline.ocr">漫画 OCR</b><small data-i18n="pipeline.ocr.detail">读取日文内容</small></span></div><div class="step-line"></div>
+              <div class="pipeline-step" data-phase="translate"><i>3</i><span><b data-i18n="pipeline.translate">连贯翻译</b><small data-i18n="pipeline.translate.detail">参考前后页面</small></span></div><div class="step-line"></div>
+              <div class="pipeline-step" data-phase="render"><i>4</i><span><b data-i18n="pipeline.render">原位替换</b><small data-i18n="pipeline.render.detail">保留原始尺寸</small></span></div>
             </div>
           </section>
 
           <div class="workspace-grid">
             <section class="panel preview-card" data-testid="preview-card">
-              <div class="preview-head"><div><b>页面预览</b><span id="previewName">尚未载入页面</span></div><div class="segments" role="group" aria-label="预览模式"><button data-preview="source">原图</button><button data-preview="output">译文</button><button class="selected" data-preview="compare">对比</button></div></div>
+              <div class="preview-head"><div><b data-i18n="preview.title">页面预览</b><span id="previewName" data-i18n="preview.none">尚未载入页面</span></div><div class="segments" role="group" aria-label="预览模式" data-i18n-aria-label="preview.mode"><button data-preview="source" data-i18n="preview.source">原图</button><button data-preview="output" data-i18n="preview.output">译文</button><button class="selected" data-preview="compare" data-i18n="preview.compare">对比</button></div></div>
               <div id="previewCanvas" class="preview-canvas empty">
-                <div id="emptyPreview" class="empty-state"><span>图</span><b>选择源文件夹后开始任务</b><p>完成的页面会在这里提供原图与译文对比</p></div>
-                <figure class="preview-pane source-pane"><figcaption>原图</figcaption><img id="sourcePreview" alt="源漫画页面预览"></figure>
+                <div id="emptyPreview" class="empty-state"><span>图</span><b data-i18n="preview.empty.title">选择源文件夹后开始任务</b><p data-i18n="preview.empty.detail">完成的页面会在这里提供原图与译文对比</p></div>
+                <figure class="preview-pane source-pane"><figcaption data-i18n="preview.source">原图</figcaption><img id="sourcePreview" alt="源漫画页面预览" data-i18n-alt="preview.source.alt"></figure>
                 <div class="compare-divider">↔</div>
-                <figure class="preview-pane output-pane"><figcaption>译文</figcaption><img id="outputPreview" alt="本地化页面预览"><div id="outputPending" class="preview-pending" role="status">等待生成译文页面</div></figure>
+                <figure class="preview-pane output-pane"><figcaption data-i18n="preview.output">译文</figcaption><img id="outputPreview" alt="本地化页面预览" data-i18n-alt="preview.output.alt"><div id="outputPending" class="preview-pending" role="status" data-i18n="preview.output.waiting">等待生成译文页面</div></figure>
               </div>
-              <div class="pager"><button id="prevPage" aria-label="上一页" disabled>‹</button><span><b id="pageNumber">0</b> / <span id="pageTotal">0</span></span><button id="nextPage" aria-label="下一页" disabled>›</button></div>
+              <div class="pager"><button id="prevPage" aria-label="上一页" data-i18n-aria-label="preview.previous" disabled>‹</button><span><b id="pageNumber">0</b> / <span id="pageTotal">0</span></span><button id="nextPage" aria-label="下一页" data-i18n-aria-label="preview.next" disabled>›</button></div>
             </section>
 
             <aside class="inspector">
               <section class="panel model-panel" data-testid="model-status">
-                <div class="section-title"><span>模型状态</span><button id="refreshModels" class="text-button" aria-label="刷新模型状态">↻</button></div>
+                <div class="section-title"><span data-i18n="models.status">模型状态</span><button id="refreshModels" class="text-button" aria-label="刷新模型状态" data-i18n-aria-label="models.refresh">↻</button></div>
                 <div id="modelRows" class="model-rows" aria-live="polite"></div>
-                <button id="bootstrapModels" class="secondary-button">准备缺失模型</button>
-                <div id="modelProgress" class="mini-progress" hidden><i></i><small>准备模型…</small></div>
+                <button id="bootstrapModels" class="secondary-button" data-i18n="models.prepareMissing">准备缺失模型</button>
+                <div id="modelProgress" class="mini-progress" hidden><i></i><small data-i18n="models.preparing">准备模型…</small></div>
               </section>
 
               <section class="panel settings-panel" data-testid="translation-settings">
-                <div class="section-title"><span>翻译设置</span></div>
-                <label class="context-row"><span>处理质量</span><select id="qualityProfile"><option value="quality">质量优先（9B 分阶段审校＋Hy-MT2＋LaMa）</option><option value="fast">轻量快速（单模型翻译＋传统补画）</option></select></label>
-                <label class="context-row"><span>输出格式</span><select id="outputFormat"><option value="webp">无损 WebP（推荐，体积较小）</option><option value="png">无损 PNG（兼容优先）</option></select></label>
-                <label class="context-row"><span>OCR 后端</span><select id="ocrBackend"><option value="hybrid">混合质量 OCR（推荐）</option><option value="builtin">内置专用 OCR（快速）</option><option value="ollama">仅 Ollama 视觉模型（实验）</option></select></label>
-                <label class="context-row"><span>推理后端</span><select id="inferenceBackend"><option value="ollama">Ollama 本地推理（推荐）</option><option value="builtin">内置 Hy-MT2（快速）</option><option value="online">在线兼容 API</option></select></label>
-                <label class="toggle-row"><span><b>故事连贯模式</b><small>参考相邻页面调整人名和语气</small></span><input id="storyContext" type="checkbox"><i></i></label>
-                <label class="context-row"><span>上下文页数</span><div class="counter"><button id="contextMinus" type="button">−</button><output id="contextPages">6</output><button id="contextPlus" type="button">＋</button></div></label>
-                <label class="toggle-row"><span><b>保留拟声词</b><small>仅替换对白和旁白</small></span><input id="preserveSfx" type="checkbox"><i></i></label>
+                <div class="section-title"><span data-i18n="translation.title">翻译设置</span></div>
+                <label class="context-row"><span data-i18n="translation.quality">处理质量</span><select id="qualityProfile"><option value="quality" data-i18n="translation.quality.quality">质量优先（9B 分阶段审校＋Hy-MT2＋LaMa）</option><option value="fast" data-i18n="translation.quality.fast">轻量快速（单模型翻译＋传统补画）</option></select></label>
+                <label class="context-row"><span data-i18n="translation.format">输出格式</span><select id="outputFormat"><option value="webp" data-i18n="translation.format.webp">无损 WebP（推荐，体积较小）</option><option value="png" data-i18n="translation.format.png">无损 PNG（兼容优先）</option></select></label>
+                <label class="context-row"><span data-i18n="translation.ocr">OCR 后端</span><select id="ocrBackend"><option value="hybrid" data-i18n="translation.ocr.hybrid">混合质量 OCR（推荐）</option><option value="builtin" data-i18n="translation.ocr.builtin">内置专用 OCR（快速）</option><option value="ollama" data-i18n="translation.ocr.ollama">仅 Ollama 视觉模型（实验）</option></select></label>
+                <label class="context-row"><span data-i18n="translation.inference">推理后端</span><select id="inferenceBackend"><option value="ollama" data-i18n="translation.inference.ollama">Ollama 本地推理（推荐）</option><option value="builtin" data-i18n="translation.inference.builtin">内置 Hy-MT2（快速）</option><option value="online" data-i18n="translation.inference.online">在线兼容 API</option></select></label>
+                <label class="toggle-row"><span><b data-i18n="translation.story">故事连贯模式</b><small data-i18n="translation.story.detail">参考相邻页面调整人名和语气</small></span><input id="storyContext" type="checkbox"><i></i></label>
+                <label class="context-row"><span data-i18n="translation.context">上下文页数</span><div class="counter"><button id="contextMinus" type="button">−</button><output id="contextPages">6</output><button id="contextPlus" type="button">＋</button></div></label>
+                <label class="toggle-row"><span><b data-i18n="translation.sfx">保留拟声词</b><small data-i18n="translation.sfx.detail">仅替换对白和旁白</small></span><input id="preserveSfx" type="checkbox"><i></i></label>
               </section>
 
-              <button id="startButton" class="primary-button" disabled>开始本地化 <span>→</span></button>
-              <p id="privacyNotice" class="privacy">所有处理均在本机完成，不上传图片</p>
+              <button id="startButton" class="primary-button" disabled><span data-i18n="translation.start">开始本地化</span> <span>→</span></button>
+              <p id="privacyNotice" class="privacy" data-i18n="privacy.local.notice">所有处理均在本机完成，不上传图片</p>
             </aside>
           </div>
 
           <section class="panel execution-bar" data-testid="execution-status">
-            <div class="execution-copy"><span id="activityRing" class="activity-ring"></span><div><b id="jobMessage">尚未开始任务</b><small id="jobDetail">选择源文件夹和输出目录后即可开始</small></div></div>
+            <div class="execution-copy"><span id="activityRing" class="activity-ring"></span><div><b id="jobMessage" data-i18n="job.notStarted">尚未开始任务</b><small id="jobDetail" data-i18n="job.selectFolders">选择源文件夹和输出目录后即可开始</small></div></div>
             <div class="progress-track"><i id="jobProgress"></i></div><span id="jobCount">0 / 0</span>
-            <button id="pauseButton" disabled title="当前版本不支持安全暂停">Ⅱ 暂停</button>
+            <button id="pauseButton" disabled title="当前版本不支持安全暂停" data-i18n-title="job.pauseUnsupported">Ⅱ <span data-i18n="job.pause">暂停</span></button>
           </section>
         </section>
 
-        <section id="historyView" class="view utility-view" data-view-panel="history"><div class="utility-head"><div><h2>任务记录</h2><p>任务状态会保存在本机应用目录。</p></div><button id="refreshJobs" class="secondary-button">刷新</button></div><div id="jobList" class="utility-list"></div></section>
-        <section id="modelsView" class="view utility-view" data-view-panel="models"><div class="utility-head"><div><h2>模型管理</h2><p>默认优先从 ModelScope 下载；无等价模型时明确回退。</p></div><button id="bootstrapModelsLarge" class="primary-small">准备全部模型</button></div><div id="modelListLarge" class="utility-list"></div></section>
+        <section id="historyView" class="view utility-view" data-view-panel="history"><div class="utility-head"><div><h2 data-i18n="history.title">任务记录</h2><p data-i18n="history.detail">任务状态会保存在本机应用目录。</p></div><button id="refreshJobs" class="secondary-button" data-i18n="history.refresh">刷新</button></div><div id="jobList" class="utility-list"></div></section>
+        <section id="modelsView" class="view utility-view" data-view-panel="models"><div class="utility-head"><div><h2 data-i18n="modelPage.title">模型管理</h2><p data-i18n="modelPage.detail">默认优先从 ModelScope 下载；无等价模型时明确回退。</p></div><button id="bootstrapModelsLarge" class="primary-small" data-i18n="modelPage.prepareAll">准备全部模型</button></div><div id="modelListLarge" class="utility-list"></div></section>
         <section id="settingsView" class="view utility-view" data-view-panel="settings">
-          <div class="utility-head"><div><h2>设置</h2><p>后端配置保存在本机；API 密钥仅保留在当前服务进程或环境变量中。</p></div><button id="checkInference" class="primary-small">测试推理连接</button></div>
+          <div class="utility-head"><div><h2 data-i18n="settings.title">设置</h2><p data-i18n="settings.detail">后端配置保存在本机；API 密钥仅保留在当前服务进程或环境变量中。</p></div><button id="checkInference" class="primary-small" data-i18n="settings.check">测试推理连接</button></div>
           <div class="panel settings-form">
-            <label>OCR 后端<select id="ocrBackendSetting"><option value="hybrid">Paddle 精确框＋Ollama 整页语义（推荐）</option><option value="builtin">PaddleOCR＋Manga OCR（快速）</option><option value="ollama">仅 Ollama 视觉 OCR（实验）</option></select></label>
-            <label>推理后端<select id="inferenceBackendSetting"><option value="ollama">Ollama 本地推理（最高 9B）</option><option value="builtin">内置 Hy-MT2（快速模式）</option><option value="online">在线 OpenAI 兼容 API</option></select></label>
-            <div id="builtinFields" class="backend-fields"><b>内置轻量翻译模型</b><p>使用 ModelScope 下载的 Hy-MT2 1.8B，适合低配置快速初译；质量模式推荐本机 Ollama。</p></div>
+            <label><span data-i18n="translation.ocr">OCR 后端</span><select id="ocrBackendSetting"><option value="hybrid" data-i18n="settings.ocr.hybrid">Paddle 精确框＋Ollama 整页语义（推荐）</option><option value="builtin" data-i18n="settings.ocr.builtin">PaddleOCR＋Manga OCR（快速）</option><option value="ollama" data-i18n="settings.ocr.ollama">仅 Ollama 视觉 OCR（实验）</option></select></label>
+            <label><span data-i18n="translation.inference">推理后端</span><select id="inferenceBackendSetting"><option value="ollama" data-i18n="settings.inference.ollama">Ollama 本地推理（最高 9B）</option><option value="builtin" data-i18n="settings.inference.builtin">内置 Hy-MT2（快速模式）</option><option value="online" data-i18n="settings.inference.online">在线 OpenAI 兼容 API</option></select></label>
+            <div id="builtinFields" class="backend-fields"><b data-i18n="settings.builtin.title">内置轻量翻译模型</b><p data-i18n="settings.builtin.detail">使用 ModelScope 下载的 Hy-MT2 1.8B，适合低配置快速初译；质量模式推荐本机 Ollama。</p></div>
             <div id="ollamaFields" class="backend-fields" hidden>
-              <label>Ollama 地址<input id="ollamaBaseUrl" type="url" value="http://127.0.0.1:11434"></label>
-              <label>翻译模型名称<input id="ollamaModel" list="inferenceModels" placeholder="huihui_ai/qwen3.5-abliterated:9b"></label>
-              <label>视觉 OCR 模型名称<input id="ollamaOcrModel" list="inferenceModels" placeholder="huihui_ai/qwen3.5-abliterated:9b"></label>
-              <p>质量模式只使用所选的 9B 或更小 Ollama 模型：先生成草稿，再与 Hy-MT2 独立候选做分阶段上下文审校，不下载更大的模型。</p>
+              <label><span data-i18n="settings.ollama.url">Ollama 地址</span><input id="ollamaBaseUrl" type="url" value="http://127.0.0.1:11434"></label>
+              <label><span data-i18n="settings.ollama.model">翻译模型名称</span><input id="ollamaModel" list="inferenceModels" placeholder="huihui_ai/qwen3.5-abliterated:9b"></label>
+              <label><span data-i18n="settings.ollama.ocrModel">视觉 OCR 模型名称</span><input id="ollamaOcrModel" list="inferenceModels" placeholder="huihui_ai/qwen3.5-abliterated:9b"></label>
+              <p data-i18n="settings.ollama.detail">质量模式只使用所选的 9B 或更小 Ollama 模型：先生成草稿，再与 Hy-MT2 独立候选做分阶段上下文审校，不下载更大的模型。</p>
             </div>
             <div id="onlineFields" class="backend-fields" hidden>
-              <label>兼容 API 地址<input id="onlineBaseUrl" type="url" placeholder="https://api.openai.com/v1"></label>
-              <label>模型名称<input id="onlineModel" list="inferenceModels" placeholder="输入服务商提供的模型 ID"></label>
-              <label>API 密钥<input id="onlineApiKey" type="password" autocomplete="off" placeholder="可使用 MLS_ONLINE_API_KEY"></label>
-              <p>在线模式只发送 OCR 文本、前文和术语表，不上传漫画图片。</p>
+              <label><span data-i18n="settings.online.url">兼容 API 地址</span><input id="onlineBaseUrl" type="url" placeholder="https://api.openai.com/v1"></label>
+              <label><span data-i18n="settings.online.model">模型名称</span><input id="onlineModel" list="inferenceModels" placeholder="输入服务商提供的模型 ID" data-i18n-placeholder="settings.online.model.placeholder"></label>
+              <label><span data-i18n="settings.online.key">API 密钥</span><input id="onlineApiKey" type="password" autocomplete="off" placeholder="可使用 MLS_ONLINE_API_KEY" data-i18n-placeholder="settings.online.key.placeholder"></label>
+              <p data-i18n="settings.online.detail">在线模式只发送 OCR 文本、前文和术语表，不上传漫画图片。</p>
             </div>
             <datalist id="inferenceModels"></datalist>
-            <p id="inferenceStatus" class="inference-status">尚未测试连接</p>
-            <label>计算设备<select id="deviceSetting"><option value="auto">自动选择</option><option value="cpu">CPU</option><option value="gpu:0">GPU 0</option></select></label>
-            <label class="toggle-row"><span><b>ModelScope 优先</b><small>适合中国大陆网络环境</small></span><input id="preferModelscope" type="checkbox"><i></i></label>
+            <p id="inferenceStatus" class="inference-status" data-i18n="settings.inference.notChecked">尚未测试连接</p>
+            <label><span data-i18n="settings.device">计算设备</span><select id="deviceSetting"><option value="auto" data-i18n="settings.device.auto">自动选择</option><option value="cpu">CPU</option><option value="gpu:0">GPU 0</option></select></label>
+            <label class="toggle-row"><span><b data-i18n="settings.modelscope">ModelScope 优先</b><small data-i18n="settings.modelscope.detail">适合中国大陆网络环境</small></span><input id="preferModelscope" type="checkbox"><i></i></label>
             <p id="appHome"></p>
           </div>
         </section>
@@ -125,7 +125,8 @@
   </div>
 
   <div id="toast" class="toast" role="status" aria-live="polite"></div>
-  <dialog id="quickStart"><button class="dialog-close" aria-label="关闭">×</button><h2>三步快速上手</h2><ol><li>先在“模型管理”准备所需权重。</li><li>选择源图片文件夹和独立输出目录。</li><li>点击“开始本地化”，任务可在记录页继续查看。</li></ol><p>首次下载约需 5 GB；图片与结果不会上传。</p></dialog>
+  <dialog id="quickStart"><button class="dialog-close" aria-label="关闭" data-i18n-aria-label="quickStart.close">×</button><h2 data-i18n="quickStart.title">三步快速上手</h2><ol><li data-i18n="quickStart.step1">先在“模型管理”准备所需权重。</li><li data-i18n="quickStart.step2">选择源图片文件夹和独立输出目录。</li><li data-i18n="quickStart.step3">点击“开始本地化”，任务可在记录页继续查看。</li></ol><p data-i18n="quickStart.detail">首次下载约需 5 GB；图片与结果不会上传。</p></dialog>
+  <script src="/i18n.js" defer></script>
   <script src="/app.js" defer></script>
 </body>
 </html>

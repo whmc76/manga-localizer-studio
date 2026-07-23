@@ -4,11 +4,13 @@ import base64
 import difflib
 import json
 import re
+import time
 import warnings
 from contextlib import contextmanager
 from dataclasses import asdict, dataclass, field
 from io import BytesIO
 from pathlib import Path
+from urllib.error import HTTPError, URLError
 from urllib.request import Request, urlopen
 
 import cv2
@@ -235,6 +237,34 @@ def duplicate_tiny_fragment(page: PageOCR, unit: TextUnit) -> bool:
             and len(other.erase_boxes) > len(unit.erase_boxes)
             and other_height >= other_width * 1.2
         ):
+            return True
+    return False
+
+
+def overlapping_sfx_echo(page: PageOCR, unit: TextUnit) -> bool:
+    """Reject a short OCR echo inside a larger, visually confirmed SFX group."""
+    compact = re.sub(r"[\s．。…、，,!?！？:：♡♥〰〜～]", "", unit.ja)
+    if (
+        unit.is_sfx
+        or unit.special == "semantic_dialogue"
+        or not re.fullmatch(r"[ァ-ヺーッ]{2,5}", compact)
+    ):
+        return False
+    x0, y0, x1, y1 = unit.bbox
+    area = max(1, (x1 - x0) * (y1 - y0))
+    for other in page.units:
+        confirmed_non_dialogue = (
+            other.special in {"decorative_sfx", "artwork_text"}
+            or other.special.startswith("sfx:")
+        )
+        if other.id == unit.id or not confirmed_non_dialogue:
+            continue
+        ox0, oy0, ox1, oy1 = other.bbox
+        intersection = max(0, min(x1, ox1) - max(x0, ox0)) * max(
+            0, min(y1, oy1) - max(y0, oy0)
+        )
+        other_area = max(1, (ox1 - ox0) * (oy1 - oy0))
+        if intersection / area >= 0.25 and other_area >= area * 3:
             return True
     return False
 
@@ -1347,49 +1377,73 @@ class OllamaVisionOCR:
             raise ValueError("An Ollama vision model is required for Ollama OCR")
 
     def _chat(self, images: list[bytes], prompt: str, schema: dict) -> dict:
-        body = json.dumps(
-            {
-                "model": self.model,
-                "stream": False,
-                "think": False,
-                "format": schema,
-                # OCR pages need bounded generation, not the model's full 262K
-                # KV cache.  A 32K working window still leaves ample room for
-                # two high-resolution images plus exhaustive JSON while keeping
-                # the local 9B path responsive on consumer GPUs.
-                "options": {
-                    "temperature": 0,
-                    "num_ctx": 32_768,
-                    "num_predict": 8192,
+        payload_base = {
+            "model": self.model,
+            "stream": False,
+            "think": False,
+            "format": schema,
+            "messages": [
+                {
+                    "role": "user",
+                    "content": prompt,
+                    "images": [
+                        base64.b64encode(content).decode("ascii")
+                        for content in images
+                    ],
+                }
+            ],
+        }
+        retry_delays = (0.5, 2.0)
+        prediction_budgets = (8192, 12_288, 16_384)
+        for attempt in range(len(retry_delays) + 1):
+            body = json.dumps(
+                {
+                    **payload_base,
+                    # OCR pages need bounded generation, not the model's full
+                    # 262K KV cache. Escalating the output budget only after a
+                    # truncated response keeps ordinary pages responsive while
+                    # allowing a transiently verbose structured generation to
+                    # recover without accepting partial JSON.
+                    "options": {
+                        "temperature": 0,
+                        "num_ctx": 32_768,
+                        "num_predict": prediction_budgets[attempt],
+                    },
                 },
-                "messages": [
-                    {
-                        "role": "user",
-                        "content": prompt,
-                        "images": [
-                            base64.b64encode(content).decode("ascii")
-                            for content in images
-                        ],
-                    }
-                ],
-            },
-            ensure_ascii=False,
-        ).encode("utf-8")
-        request = Request(
-            f"{self.base_url}/api/chat",
-            data=body,
-            headers={"Content-Type": "application/json"},
-            method="POST",
-        )
-        try:
-            with urlopen(request, timeout=self.timeout) as response:
-                payload = json.loads(response.read().decode("utf-8"))
-        except Exception as exc:
-            raise RuntimeError(f"Ollama OCR request failed: {exc}") from exc
-        if payload.get("done_reason") == "length":
-            raise RuntimeError(
-                "Ollama OCR output was truncated before valid JSON completed"
+                ensure_ascii=False,
+            ).encode("utf-8")
+            request = Request(
+                f"{self.base_url}/api/chat",
+                data=body,
+                headers={"Content-Type": "application/json"},
+                method="POST",
             )
+            try:
+                with urlopen(request, timeout=self.timeout) as response:
+                    payload = json.loads(response.read().decode("utf-8"))
+                if payload.get("done_reason") == "length":
+                    if attempt < len(retry_delays):
+                        time.sleep(retry_delays[attempt])
+                        continue
+                    raise RuntimeError(
+                        "Ollama OCR output was truncated before valid JSON completed "
+                        f"after budgets {', '.join(map(str, prediction_budgets))}"
+                    )
+                break
+            except HTTPError as exc:
+                detail = exc.read(2000).decode("utf-8", errors="replace").strip()
+                if exc.code >= 500 and attempt < len(retry_delays):
+                    time.sleep(retry_delays[attempt])
+                    continue
+                message = f"HTTP {exc.code}: {detail or exc.reason}"
+                raise RuntimeError(f"Ollama OCR request failed: {message}") from exc
+            except (URLError, TimeoutError, OSError) as exc:
+                if attempt < len(retry_delays):
+                    time.sleep(retry_delays[attempt])
+                    continue
+                raise RuntimeError(f"Ollama OCR request failed: {exc}") from exc
+            except Exception as exc:
+                raise RuntimeError(f"Ollama OCR request failed: {exc}") from exc
         content = str(payload.get("message", {}).get("content", ""))
         return self._json_payload(content)
 
@@ -1411,7 +1465,9 @@ class OllamaVisionOCR:
             width, height = image.size
         prompt = (
             "Detect every Japanese text region in this manga page, including dialogue, "
-            "narration, furigana and sound effects. Return JSON only as "
+            "narration and sound effects. Furigana annotating kanji is reading evidence, "
+            "not a second copy of the text: return the main kanji expression once. "
+            "Return JSON only as "
             '{"regions":[{"bbox":[x0,y0,x1,y1],"text":"...",'
             '"score":0.0,"is_sfx":false}]}. Coordinates must be integer source-image '
             f"pixels within width={width}, height={height}. Do not translate or omit text."
@@ -1533,6 +1589,7 @@ class OllamaVisionOCR:
         prompt = f"""你会收到同一张日语漫画的两幅图：第一幅是无标记原图，第二幅有红色编号框。
 逐框结合整页上下文校正 OCR。红框和数字是程序标记，不属于漫画文字。
 必须为每个 id 返回一项；不要翻译。text 只写框内日文，保留标点和语气符号。
+汉字旁或上方的振假名只用于确认读音，不得把“振假名＋汉字正文”重复写入 text；保留汉字正文一次。只有不属于汉字注音的独立假名才抄写。
 role 必须区分 dialogue（对白）、narration（旁白）、sfx（拟声/效果字）、artwork（衣服印花、商标、招牌或画面道具文字）和 noise（误检）。
 衣服、包装和背景物件上的装饰字属于 artwork，不能当对白；一个框同时含对白和 artwork 时只抄对白并选 dialogue。
 仅 role=sfx 时填写最接近的 effect_kind，否则填 none。
@@ -1622,6 +1679,12 @@ role 必须区分 dialogue（对白）、narration（旁白）、sfx（拟声/�
                     unit.special = "artwork_text" if role == "artwork" else "ocr_noise"
                     continue
                 if not agrees:
+                    if role in {"sfx", "artwork", "noise"} and score >= 0.85:
+                        # Preserve the detector text and ask the tight crop to
+                        # adjudicate the role.  Previously this disagreement
+                        # was silently ignored and obvious effects could enter
+                        # the dialogue translator as invented speech.
+                        unit.special = "semantic_role_conflict"
                     continue
                 unit.ja = candidate
                 unit.score = max(unit.score, round(score, 4))
@@ -1690,6 +1753,8 @@ missing.text 必须逐字抄写完整日文，不翻译；bbox 使用 0 到 1000
     @staticmethod
     def _local_crop_is_suspicious(unit: TextUnit) -> bool:
         """Flag OCR text whose length is implausible for its exact geometry."""
+        if unit.special == "semantic_role_conflict":
+            return True
         text = re.sub(r"\s+", "", unit.ja)
         if not text:
             return True
@@ -1838,6 +1903,7 @@ missing.text 必须逐字抄写完整日文，不翻译；bbox 使用 0 到 1000
             order = "、".join(ids)
             prompt = f"""你会依次收到 {len(units)} 张漫画文字框的紧密局部放大图，对应 id 顺序为：{order}。
 每张图只抄写局部内真正可见的日文，禁止根据故事或相邻图片补全。
+汉字旁或上方的振假名只用于确认读音，不得与汉字正文重复抄写；保留汉字正文一次。
 role 选择 dialogue（对白）、narration（旁白）、sfx（拟声/效果字）、artwork（衣服印花、商标、招牌或道具文字）或 noise（误检）。看不清就选 noise。
 仅 role=sfx 时根据画面填写 effect_kind，否则填写 none。衣服或背景物件上的文字不能当对白。
 必须为每个 id 返回一项。"""
@@ -2044,12 +2110,14 @@ role 选择 dialogue（对白）、narration（旁白）、sfx（拟声/效果�
                 unit.skip_reason = "decorative"
                 unit.special = "decorative_sfx"
                 continue
+            sfx_echo = overlapping_sfx_echo(page, unit)
             if unit.special != "semantic_dialogue" and (
                 tiny_low_confidence_nontext(page, unit)
                 or malformed_tiny_ocr(page, unit)
                 or duplicate_tiny_fragment(page, unit)
+                or sfx_echo
             ):
-                duplicate = duplicate_tiny_fragment(page, unit)
+                duplicate = duplicate_tiny_fragment(page, unit) or sfx_echo
                 unit.zh = ""
                 unit.skip = True
                 unit.skip_reason = "duplicate" if duplicate else "noise"
