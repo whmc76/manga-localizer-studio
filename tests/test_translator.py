@@ -735,9 +735,7 @@ def test_semantic_audit_accepts_chinese_restriction_for_shika_nai():
         1.0,
     )
     assert (
-        OllamaTranslator._preserves_audit_information(
-            unit, "我只在图片里见过……"
-        )
+        OllamaTranslator._preserves_audit_information(unit, "我只在图片里见过……")
         is True
     )
     assert OllamaTranslator._preserves_audit_information(unit, "我见过图片……") is False
@@ -752,12 +750,75 @@ def test_semantic_audit_accepts_chinese_rhetorical_negation():
         1.0,
     )
     assert (
+        OllamaTranslator._preserves_audit_information(unit, "怎么可能会带着避孕套啊！")
+        is True
+    )
+    assert (
+        OllamaTranslator._preserves_audit_information(unit, "带着避孕套啊！") is False
+    )
+
+
+@pytest.mark.parametrize(
+    ("source", "target"),
+    [
+        ("少なくとも土日は絶対安静だ", "至少周末要绝对休息"),
+        ("そこっ！？きっきたないですっ！！", "那里啊！？真恶心！！"),
+        ("うち貧乏だからお金貯めないとだし", "我家穷，得攒钱呢"),
+        ("一緒に観ない？", "一起看吗？"),
+        ("もしよかったら一緒に行かない．．．？東京．．．", "方便的话一起去吧？东京……"),
+    ],
+)
+def test_semantic_gate_distinguishes_lexical_nai_obligation_and_invitations(
+    source, target
+):
+    unit = TextUnit(
+        "p001u01",
+        [0, 0, 20, 80],
+        [0, 0, 20, 80],
+        source,
+        1.0,
+    )
+    assert OllamaTranslator._preserves_audit_information(unit, target) is True
+
+
+def test_semantic_gate_allows_natural_kana_to_chinese_compression():
+    unit = TextUnit(
+        "p001u01",
+        [0, 0, 20, 80],
+        [0, 0, 20, 80],
+        "あ：はいありがとうございます",
+        1.0,
+    )
+    assert OllamaTranslator._preserves_audit_information(unit, "啊，谢谢您") is True
+
+
+def test_semantic_gate_still_rejects_a_lost_real_negation():
+    unit = TextUnit(
+        "p001u01",
+        [0, 0, 20, 80],
+        [0, 0, 20, 80],
+        "深夜なのに生放送でしかもめっちゃ賑やかでさ．．．"
+        "それ聴いてたらひとりぼっちじゃない",
+        1.0,
+    )
+    assert (
         OllamaTranslator._preserves_audit_information(
-            unit, "怎么可能会带着避孕套啊！"
+            unit, "深夜还在直播，听着就觉得很孤独"
+        )
+        is False
+    )
+    assert (
+        OllamaTranslator._preserves_audit_information(
+            unit, "深夜还在直播，听着就觉得自己不是孤单一人"
         )
         is True
     )
-    assert OllamaTranslator._preserves_audit_information(unit, "带着避孕套啊！") is False
+
+
+def test_translation_normalization_localizes_ok_loanword():
+    assert PromptTranslator()._normalize_translation("不，不是不行！OK！") == (
+        "不，不是不行！好！"
+    )
 
 
 def test_semantic_gate_preserves_implicit_questions_and_relationship_possession():

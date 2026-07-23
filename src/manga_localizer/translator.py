@@ -43,11 +43,20 @@ SEMANTIC_RISK_RE = re.compile(
     r"処女マン|マンコ|：|のかよ|なのか|いんだろ|いるんだろ|笑|ゲーム"
 )
 TARGET_NEGATION_RE = re.compile(
-    r"不|没|别|无|勿|莫|不能|不要|不可|难以|算了|拒绝|"
+    r"不|没|别|无|勿|莫|并非|未|不能|不要|不可|难以|算了|拒绝|"
     r"怎么可能|哪有|哪会|哪能|何来|谁会"
 )
 TARGET_RESTRICTION_RE = re.compile(r"只|仅|唯|不过|除(?:了|非)")
-GENERAL_TERMS = {"キス": "亲吻"}
+TARGET_OBLIGATION_RE = re.compile(r"得|必须|务必|需要|需|要|才行|非得|不能不")
+LEXICAL_NAI_RE = re.compile(
+    r"少なくとも|きたない|汚い|危ない|危なく|少ない|少なく|"
+    r"切ない|もったいない"
+)
+GENERAL_TERMS = {
+    "キス": "亲吻",
+    "ガングロ": "黑皮",
+    "マジシャン": "魔术师",
+}
 ADULT_TERMS = {
     "中出し": "内射",
     "イキ": "高潮",
@@ -267,9 +276,7 @@ class PromptTranslator:
         pending_id = ""
 
         def clean_candidate(candidate: str) -> str:
-            return self._normalize_translation(
-                re.sub(r"^\s*[:：]\s*", "", candidate)
-            )
+            return self._normalize_translation(re.sub(r"^\s*[:：]\s*", "", candidate))
 
         for raw_line in text.splitlines():
             line = raw_line.strip()
@@ -338,6 +345,11 @@ class PromptTranslator:
         clean = text.strip()
         if "简体" in self.target_language:
             clean = OpenCC("t2s").convert(clean)
+            # Japanese dialogue commonly uses オッケー while local models
+            # render it as ASCII OK.  Normalize that ordinary loanword instead
+            # of letting the generic Latin-leak gate discard an otherwise
+            # complete Chinese line.
+            clean = re.sub(r"\bOK(?:AY)?\b", "好", clean, flags=re.IGNORECASE)
         return clean
 
     @staticmethod
@@ -377,7 +389,71 @@ class PromptTranslator:
         return bool(proposed) and len(proposed) <= maximum and not dialogue_leak
 
     @staticmethod
-    def _preserves_audit_information(unit: TextUnit, candidate: str) -> bool:
+    def _source_is_question(source: str) -> bool:
+        return bool(
+            re.search(r"[?？]", source)
+            or re.search(
+                r"(?:のかよ|なのか|(?:でしょう|です|ます)?か)"
+                r"[!！…．。.]*$",
+                source.strip(),
+            )
+        )
+
+    @staticmethod
+    def _source_negation_contract(source: str) -> tuple[bool, bool, bool, bool]:
+        """Classify Japanese ``ない`` without confusing lexical lookalikes.
+
+        Returns ``(has_negation, restrictive, obligation, negative_question)``.
+        Japanese negative questions often express invitations or confirmation,
+        while ``ないと`` commonly expresses obligation.  Both can be faithful
+        Chinese without a literal 不/没 token.
+        """
+        semantic_source = LEXICAL_NAI_RE.sub("", source)
+        has_negation = bool(
+            re.search(
+                r"ない|なく|ません|無理|だめ|ダメ|駄目|じゃない|ではない",
+                semantic_source,
+            )
+        )
+        restrictive = bool(
+            re.search(r"しか.{0,24}(?:ない|なく|ません)", semantic_source, re.S)
+        )
+        obligation = bool(
+            re.search(
+                r"ないと(?:(?:ダメ|だめ|いけない|ならない)|"
+                r"(?:だし)?[。．…!?！？]*$)",
+                semantic_source,
+            )
+        )
+        negative_question = bool(
+            re.search(
+                r"(?:じゃない|ではない|ない)[。．…]*[?？]",
+                semantic_source,
+            )
+        )
+        return has_negation, restrictive, obligation, negative_question
+
+    @classmethod
+    def _audit_repair_hints(cls, unit: TextUnit) -> str:
+        """Explain the active hard gates to a repair model."""
+        has_negation, restrictive, obligation, negative_question = (
+            cls._source_negation_contract(unit.ja)
+        )
+        hints: list[str] = []
+        if restrictive:
+            hints.append("しか～ない要译出“只/仅”这一限制")
+        elif obligation:
+            hints.append("ないと/ないとダメ在此表示“得/必须/要……才行”")
+        elif negative_question:
+            hints.append("否定问句可能是邀请或确认，中文要保留问句、邀请或确认语气")
+        elif has_negation:
+            hints.append("原文有真实否定，中文必须保留“不/没/别/无/非”等否定意义")
+        if cls._source_is_question(unit.ja):
+            hints.append("原文是问句，中文必须保留疑问或征询语气")
+        return "；".join(hints)
+
+    @classmethod
+    def _preserves_audit_information(cls, unit: TextUnit, candidate: str) -> bool:
         """Reject summaries, truncated clauses, and lost source negation."""
         source = re.sub(r"[\s.．。…、，,!?！？:：♡♥〰〜～]", "", unit.ja)
         proposed = re.sub(r"[\s。…、，,!?！？:：♡♥〰〜～]", "", candidate)
@@ -386,30 +462,44 @@ class PromptTranslator:
             # Chinese uses one or two compact sound words. Do not apply prose
             # information-density ratios to confirmed SFX.
             return bool(proposed) and len(proposed) <= max(12, len(source) * 2)
-        source_is_question = bool(
-            re.search(r"[?？]", unit.ja)
-            or re.search(r"(?:のかよ|なのか)[!！…．.]*$", unit.ja.strip())
-        )
+        source_is_question = cls._source_is_question(unit.ja)
         if len(source) >= 5 and len(proposed) < 2:
             return False
-        length_ratio = 0.25 if source_is_question else 0.4
-        minimum_length = 2 if source_is_question else 3
-        if len(source) >= 7 and len(proposed) < max(
-            minimum_length, round(len(source) * length_ratio)
-        ):
+        # Kana-heavy Japanese routinely contracts to much shorter Chinese
+        # (ありがとうございます -> 谢谢). Count kanji as semantic units and
+        # kana at a conservative fractional weight instead of applying a raw
+        # character ratio that rejects natural translations.
+        kanji_count = len(KANJI_RE.findall(source))
+        kana_count = len(KANA_RE.findall(source))
+        minimum_length = max(
+            2 if source_is_question else 3,
+            round(kanji_count + kana_count * 0.2) - (1 if source_is_question else 0),
+        )
+        if len(source) >= 7 and len(proposed) < minimum_length:
             return False
         if len(source) >= 4 and len(proposed) > max(12, round(len(source) * 2.0)):
             return False
-        source_has_negation = bool(
-            re.search(r"ない|なく|ません|無理|だめ|駄目|じゃない|ではない", unit.ja)
-        )
-        source_is_restrictive = bool(
-            re.search(r"しか.{0,24}(?:ない|なく|ません)", unit.ja, re.S)
-        )
+        (
+            source_has_negation,
+            source_is_restrictive,
+            source_is_obligation,
+            source_is_negative_question,
+        ) = cls._source_negation_contract(unit.ja)
         if (
             source_has_negation
             and not TARGET_NEGATION_RE.search(candidate)
             and not (source_is_restrictive and TARGET_RESTRICTION_RE.search(candidate))
+            and not (source_is_obligation and TARGET_OBLIGATION_RE.search(candidate))
+            and not (
+                source_is_negative_question
+                and (
+                    source_is_question
+                    and (
+                        re.search(r"[?？]", candidate)
+                        or re.search(r"吧[。．…]*$", candidate.strip())
+                    )
+                )
+            )
         ):
             return False
         target_is_question = bool(
@@ -417,6 +507,7 @@ class PromptTranslator:
                 r"[?？]|吗|么|是不是|有没有|难道|怎么|什么|谁|哪|为何|为啥|何必|可否",
                 candidate,
             )
+            or re.search(r"吧[。．…]*$", candidate.strip())
         )
         if source_is_question and not target_is_question:
             return False
@@ -855,9 +946,11 @@ class PromptTranslator:
             if calm_statement
             else "保持原文语气强度，不得凭上下文额外煽情。"
         )
+        audit_constraint = self._audit_repair_hints(unit) or "逐项保留原文信息。"
         prompt = f"""只翻译【原文】为{self.target_language}，只输出一行译文。
 译文风格：{self.translation_register}。
 语气约束：{tone_constraint}
+语义约束：{audit_constraint}
 上下文仅供理解，绝对不要复述上下文。译文不得含日文假名，姓名也译成中文；最多 {limit} 个字符。
 固定译名：{unit_terms}
 上下文：{context_text}
@@ -872,6 +965,7 @@ class PromptTranslator:
             return candidate
         retry = f"""把【原文】翻译为{self.target_language}，风格必须是：{self.translation_register}。不得解释、不得复述上下文、不得含日文假名，姓名译成中文；只输出不超过 {limit} 个字符的一行译文。
 语气约束：{tone_constraint}
+语义约束：{audit_constraint}
 固定译名：{unit_terms}
 【原文】{unit.ja}"""
         retry_candidate = self._normalize_translation(
@@ -885,6 +979,7 @@ class PromptTranslator:
         repair = f"""下面的翻译仍含日文假名、为空或格式不合格，请彻底改写。
 只使用自然简洁的{self.target_language}、数字和必要标点；即使是人名、语气词、喘息声或拟声词，也不能原样保留任何日文假名。
 语气约束：{tone_constraint}
+语义约束：{audit_constraint}
 不得解释，只输出不超过 {limit} 个字符的一行最终译文。
 固定译名：{unit_terms}
 【原文】{unit.ja}
