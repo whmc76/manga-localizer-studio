@@ -266,6 +266,28 @@ def test_translation_quality_gate_allows_natural_chinese_expansion():
     )
 
 
+def test_lexicalized_apology_is_not_treated_as_logical_negation():
+    unit = TextUnit(
+        "p017u23",
+        [0, 0, 20, 80],
+        [0, 0, 20, 80],
+        "なんか申し訳ないな．．．",
+        0.9,
+    )
+    assert PromptTranslator()._candidate_is_acceptable(unit, "有点抱歉呢……", {})
+
+
+def test_repeated_short_vocalization_allows_natural_two_glyph_contraction():
+    unit = TextUnit(
+        "p052u04",
+        [0, 0, 80, 80],
+        [0, 0, 80, 80],
+        "ふぅうううぅう♥♥♥",
+        0.9,
+    )
+    assert PromptTranslator()._candidate_is_acceptable(unit, "呼呜♥♥♥", {})
+
+
 def test_short_interjection_cannot_absorb_another_dialogue_line():
     unit = TextUnit("p001u01", [0, 0, 20, 20], [0, 0, 20, 20], "にゃ", 1.0)
     assert (
