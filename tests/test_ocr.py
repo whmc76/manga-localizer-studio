@@ -17,6 +17,7 @@ from manga_localizer.ocr import (
     _light_on_dark_regions,
     _outlined_light_text_regions_near,
     _suppress_optional_ccache_warning,
+    classify_non_story_text,
     duplicate_tiny_fragment,
     deduplicate_nested_region_groups,
     likely_sfx_text,
@@ -32,6 +33,54 @@ from manga_localizer.ocr import (
     semantic_sfx_classification,
     tiny_low_confidence_nontext,
 )
+
+
+def test_publication_metadata_and_misread_edge_folio_are_preserved():
+    metadata = TextUnit(
+        "p077u01",
+        [575, 2122, 2012, 2932],
+        [518, 2098, 2069, 2956],
+        "初版発行日：2026/08/16 発行者・サークル 漫画・イラスト "
+        "Twitter(X) ロゴデザイン・協力 印刷",
+        0.92,
+        erase_boxes=[
+            [846, 2122, 1752, 2212],
+            [975, 2219, 1623, 2309],
+            [899, 2316, 1695, 2406],
+            [575, 2410, 2012, 2503],
+        ],
+    )
+    folio = TextUnit(
+        "p077u02",
+        [27, 3212, 69, 3286],
+        [17, 3202, 79, 3296],
+        "フ８",
+        0.88,
+    )
+    page = PageOCR(77, "0077.webp", 2560, 3581, [metadata, folio])
+
+    classify_non_story_text(page)
+
+    assert (metadata.skip_reason, metadata.special) == (
+        "preserve",
+        "publication_metadata",
+    )
+    assert (folio.skip_reason, folio.special) == ("decorative", "page_folio")
+
+
+def test_story_dialogue_with_one_metadata_word_is_not_skipped():
+    unit = TextUnit(
+        "p001u01",
+        [100, 100, 300, 500],
+        [90, 90, 310, 510],
+        "漫画を読もう",
+        0.9,
+    )
+    page = PageOCR(1, "001.webp", 1000, 1400, [unit])
+
+    classify_non_story_text(page)
+
+    assert unit.skip is False
 
 
 def test_orthogonal_scene_text_does_not_join_vertical_dialogue():

@@ -5,6 +5,7 @@ import difflib
 import json
 import re
 import time
+import unicodedata
 import warnings
 from contextlib import contextmanager
 from dataclasses import asdict, dataclass, field
@@ -184,6 +185,88 @@ def malformed_tiny_ocr(page: PageOCR, unit: TextUnit) -> bool:
         and height <= page.height * 0.04
         and re.match(r"^([\u3400-\u9fff])\1", compact)
     )
+
+
+PUBLICATION_METADATA_MARKERS = (
+    "発行",
+    "サークル",
+    "漫画",
+    "イラスト",
+    "ロゴ",
+    "デザイン",
+    "協力",
+    "印刷",
+    "著者",
+    "作者",
+    "Twitter",
+)
+
+
+def classify_non_story_text(page: PageOCR) -> PageOCR:
+    """Preserve publication metadata and tiny edge folios as non-story text.
+
+    Built-in OCR deliberately groups nearby horizontal lines so ordinary text
+    blocks retain one layout region.  On colophons that produces a large
+    attribution block, while a printed page number can be misread as one kana
+    plus a digit.  Neither is safe to translate or erase: author/contact data
+    must stay byte-for-byte visible and folios are decorative navigation.
+
+    The classifier requires both semantic and geometric evidence.  It does
+    not silently skip an ordinary dialogue unit merely because one metadata
+    word appears in the story.
+    """
+    page_area = max(1, page.width * page.height)
+    for unit in page.units:
+        if unit.skip:
+            continue
+        normalized = unicodedata.normalize("NFKC", unit.ja)
+        compact = re.sub(r"[\s.．。…、，,!?！？:：♡♥〰〜～・]", "", normalized)
+        width = max(1, unit.bbox[2] - unit.bbox[0])
+        height = max(1, unit.bbox[3] - unit.bbox[1])
+        near_side = (
+            unit.bbox[0] <= page.width * 0.08
+            or unit.bbox[2] >= page.width * 0.92
+        )
+        near_page_end = (
+            unit.bbox[1] <= page.height * 0.08
+            or unit.bbox[3] >= page.height * 0.90
+        )
+        tiny_edge_folio = (
+            near_side
+            and near_page_end
+            and width <= page.width * 0.05
+            and height <= page.height * 0.05
+            and width * height <= page_area * 0.001
+            and bool(re.fullmatch(r"[ぁ-ゖァ-ヺー]?\d{1,4}", compact))
+        )
+        if tiny_edge_folio:
+            unit.zh = ""
+            unit.skip = True
+            unit.skip_reason = "decorative"
+            unit.special = "page_folio"
+            continue
+
+        markers = {
+            marker for marker in PUBLICATION_METADATA_MARKERS if marker in normalized
+        }
+        erase_boxes = unit.erase_boxes or [unit.bbox]
+        horizontal_rows = sum(
+            (box[2] - box[0]) >= max(1, box[3] - box[1]) * 1.8
+            for box in erase_boxes
+        )
+        publication_block = (
+            len(markers) >= 2
+            and len(erase_boxes) >= 3
+            and horizontal_rows >= max(3, round(len(erase_boxes) * 0.7))
+            and width >= page.width * 0.20
+            and height >= page.height * 0.06
+        )
+        if publication_block:
+            unit.zh = ""
+            unit.skip = True
+            unit.skip_reason = "preserve"
+            unit.special = "publication_metadata"
+    return page
 
 
 def duplicate_tiny_fragment(page: PageOCR, unit: TextUnit) -> bool:

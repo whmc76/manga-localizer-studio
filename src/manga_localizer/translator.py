@@ -50,7 +50,8 @@ TARGET_RESTRICTION_RE = re.compile(r"只|仅|唯|不过|除(?:了|非)")
 TARGET_OBLIGATION_RE = re.compile(r"得|必须|务必|需要|需|要|才行|非得|不能不")
 LEXICAL_NAI_RE = re.compile(
     r"少なくとも|きたない|汚い|危ない|危なく|少ない|少なく|"
-    r"切ない|もったいない"
+    r"切ない|もったいない|申し訳ない|情けない|くだらない|"
+    r"つまらない|だらしない|みっともない"
 )
 GENERAL_TERMS = {
     "キス": "亲吻",
@@ -107,6 +108,16 @@ def interjection_fallback(source: str) -> str:
             output.append(replacement)
     candidate = "".join(output).strip("…，、")
     return candidate if KANJI_RE.search(candidate) else ""
+
+
+def repeated_short_vocalization(source: str) -> bool:
+    """Recognize a compact non-lexical moan that may shrink to two Chinese glyphs."""
+    semantic = re.sub(r"[\s.．。…、，,!?！？:：♡♥〰〜～・]", "", source)
+    kana = re.findall(r"[ぁ-ゖァ-ヺー]", semantic)
+    if not kana or len(semantic) > 18 or KANJI_RE.search(semantic):
+        return False
+    counts = Counter(kana)
+    return max(counts.values()) >= 3 and bool(re.search(r"[♡♥]", source))
 
 
 def calm_preference_fallback(source: str) -> str:
@@ -461,6 +472,11 @@ class PromptTranslator:
             # Japanese effects are often long repeated strings while natural
             # Chinese uses one or two compact sound words. Do not apply prose
             # information-density ratios to confirmed SFX.
+            return bool(proposed) and len(proposed) <= max(12, len(source) * 2)
+        if repeated_short_vocalization(unit.ja):
+            # Breath and moan lettering often repeats one kana for visual
+            # rhythm, while idiomatic Chinese contracts it to 呼/呜 plus marks.
+            # Treating it as prose stranded valid two-glyph translations.
             return bool(proposed) and len(proposed) <= max(12, len(source) * 2)
         source_is_question = cls._source_is_question(unit.ja)
         if len(source) >= 5 and len(proposed) < 2:

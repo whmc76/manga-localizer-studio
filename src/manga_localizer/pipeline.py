@@ -19,6 +19,7 @@ from .ocr import (
     OllamaVisionOCR,
     PaddleMangaOCR,
     TextUnit,
+    classify_non_story_text,
     likely_sfx_text,
     list_images,
     semantic_sfx_classification,
@@ -275,6 +276,9 @@ class LocalizerPipeline:
                 else:
                     self._emit(emit, "ocr", index - 1, total, f"识别 {image_path.name}")
                     page = ocr.analyze(image_path, index)
+                # Every OCR backend shares the same non-story contract.  This
+                # also upgrades reusable OCR caches without rerunning models.
+                page = classify_non_story_text(page)
                 unsafe_missing = unsafe_semantic_missing(page, request.preserve_sfx)
                 if unsafe_missing:
                     texts = " / ".join(
